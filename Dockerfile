@@ -2,7 +2,7 @@
 ARG HUGO_VERSION=0.139.0
 ARG NGINX_VERSION=1.27-alpine
 
-FROM klakegg/hugo:${HUGO_VERSION}-ext-alpine AS build
+FROM hugomods/hugo:${HUGO_VERSION} AS build
 WORKDIR /src
 COPY . .
 RUN hugo --minify --gc --destination /out
