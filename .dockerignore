@@ -1,0 +1,11 @@
+.git
+.gitignore
+.dockerignore
+.woodpecker.yml
+.woodpecker/
+README.md
+public/
+resources/
+.hugo_build.lock
+node_modules/
+*.log

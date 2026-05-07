@@ -1,0 +1,15 @@
+baseURL      = "https://kms.viktorbarzin.me/"
+languageCode = "en-us"
+title        = "kms.viktorbarzin.me"
+disableKinds = ["taxonomy", "term", "RSS", "sitemap", "404"]
+
+[params]
+  description  = "Self-hosted KMS activation reference for Windows, Office, Project, Visio."
+  kmsHost      = "kms.viktorbarzin.lan"
+  kmsHostExt   = "kms.viktorbarzin.me"
+  kmsPort      = 1688
+  bootstrapURL = "https://nas.viktorbarzin.lan/Emo%20shared/kms-bootstrap.ps1"
+
+[markup]
+  [markup.goldmark.renderer]
+    unsafe = true

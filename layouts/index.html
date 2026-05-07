@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="{{ .Site.Params.description }}">
+  <meta name="color-scheme" content="dark light">
+  <title>{{ .Site.Title }} — KMS activation reference</title>
+  <link rel="stylesheet" href="{{ "css/style.css" | relURL }}">
+  <link rel="preconnect" href="https://rsms.me/">
+  <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="wrap">
+    <div class="brand">
+      <span class="logo">⊞</span>
+      <div>
+        <h1>kms.viktorbarzin.me</h1>
+        <p class="tag">Self-hosted KMS for Windows · Office · Project · Visio</p>
+      </div>
+    </div>
+    <nav>
+      <a href="#quickstart">Quick start</a>
+      <a href="#windows">Windows</a>
+      <a href="#server">Server</a>
+      <a href="#office">Office</a>
+      <a href="#downloads">Downloads</a>
+      <a href="#faq">FAQ</a>
+    </nav>
+  </div>
+</header>
+
+<section class="hero">
+  <div class="wrap">
+    <h2>Activate Microsoft Volume License products in seconds.</h2>
+    <p class="lede">
+      One private KMS host, every supported edition. Auto-discovery via DNS SRV from inside the network,
+      manual <code>/skms</code> from outside. No keys to remember — just install a Volume License edition
+      and it activates itself.
+    </p>
+    <div class="kms-target">
+      <div class="kms-target-item">
+        <span class="muted">Internal LAN host</span>
+        <code class="copy" data-copy="{{ .Site.Params.kmsHost }}:{{ .Site.Params.kmsPort }}">{{ .Site.Params.kmsHost }}:{{ .Site.Params.kmsPort }}</code>
+      </div>
+      <div class="kms-target-item">
+        <span class="muted">External / off-LAN host</span>
+        <code class="copy" data-copy="{{ .Site.Params.kmsHostExt }}:{{ .Site.Params.kmsPort }}">{{ .Site.Params.kmsHostExt }}:{{ .Site.Params.kmsPort }}</code>
+      </div>
+      <div class="kms-target-item">
+        <span class="muted">Auto-discovery SRV</span>
+        <code class="copy" data-copy="_vlmcs._tcp.viktorbarzin.lan">_vlmcs._tcp.viktorbarzin.lan</code>
+      </div>
+    </div>
+  </div>
+</section>
+
+<main class="wrap">
+
+<section id="quickstart">
+  <h2>Quick start — fully automatic on a new machine</h2>
+  <p>
+    On the home / lab network, a freshly-installed Volume License edition will activate itself
+    once Windows can find the SRV record. The bootstrap script below sets the Primary DNS Suffix,
+    optionally installs Office + Project (LTSC 2024 VL), triggers <code>slmgr /ato</code> + <code>ospp.vbs /act</code>,
+    and prompts for a single reboot.
+  </p>
+  <div class="card terminal">
+    <div class="card-head"><span>PowerShell (run as Administrator)</span><button class="btn-copy" data-copy-target="quickstart-cmd">Copy</button></div>
+<pre id="quickstart-cmd"><code>powershell -ExecutionPolicy Bypass -File &quot;\\nas.viktorbarzin.lan\Emo shared\kms-bootstrap.ps1&quot;</code></pre>
+  </div>
+  <p class="hint">Off-LAN? Skip auto-discovery and pin the host explicitly:</p>
+  <div class="card terminal">
+    <div class="card-head"><span>cmd.exe — explicit KMS host</span><button class="btn-copy" data-copy-target="explicit-cmd">Copy</button></div>
+<pre id="explicit-cmd"><code>slmgr /skms kms.viktorbarzin.me
+slmgr /ato
+
+cscript "C:\Program Files\Microsoft Office\Office16\ospp.vbs" /sethst:kms.viktorbarzin.me
+cscript "C:\Program Files\Microsoft Office\Office16\ospp.vbs" /act</code></pre>
+  </div>
+</section>
+
+{{/* helper: build product family groupings */}}
+{{ $windows := .Site.Data.products.windows }}
+{{ $servers := .Site.Data.products.windows_server }}
+{{ $office  := .Site.Data.products.office }}
+
+<section id="windows">
+  <h2>Windows desktop</h2>
+  <p class="muted">
+    Per-edition GVLKs. <strong>Volume License only</strong> — Home and retail SKUs cannot KMS-activate.
+    Click any key to copy.
+  </p>
+
+  {{ $byFamily := dict }}
+  {{ range $windows }}
+    {{ $f := .family }}
+    {{ $arr := index $byFamily $f | default slice }}
+    {{ $arr = $arr | append . }}
+    {{ $byFamily = merge $byFamily (dict $f $arr) }}
+  {{ end }}
+  {{ range $family, $items := $byFamily }}
+  <h3 class="family-head">{{ $family }}</h3>
+  <table class="key-table">
+    <thead><tr><th>Edition</th><th>GVLK</th><th class="notes-col">Notes</th></tr></thead>
+    <tbody>
+    {{ range $items }}
+      <tr{{ if .current }} class="current"{{ end }}>
+        <td>{{ .edition }}{{ if .current }} <span class="badge">current</span>{{ end }}</td>
+        <td><code class="copy" data-copy="{{ .gvlk }}">{{ .gvlk }}</code></td>
+        <td class="notes-col">{{ with .notes }}{{ . }}{{ else }}—{{ end }}</td>
+      </tr>
+    {{ end }}
+    </tbody>
+  </table>
+  {{ end }}
+
+  <details class="card">
+    <summary>How to use a GVLK on Windows</summary>
+<pre><code>:: open cmd.exe as Administrator
+slmgr /upk                            :: remove existing key
+slmgr /ipk &lt;PASTE-GVLK-HERE&gt;          :: install GVLK
+slmgr /skms kms.viktorbarzin.me       :: optional: skip auto-discovery
+slmgr /ato                            :: activate
+slmgr /dlv                            :: verify (look for &quot;LICENSED&quot;)</code></pre>
+  </details>
+</section>
+
+<section id="server">
+  <h2>Windows Server</h2>
+  <p class="muted">Server SKUs need only 5 unique clients to satisfy the KMS activation count threshold (vs. 25 for desktop).</p>
+
+  {{ $byFamily := dict }}
+  {{ range $servers }}
+    {{ $f := .family }}
+    {{ $arr := index $byFamily $f | default slice }}
+    {{ $arr = $arr | append . }}
+    {{ $byFamily = merge $byFamily (dict $f $arr) }}
+  {{ end }}
+  {{ range $family, $items := $byFamily }}
+  <h3 class="family-head">{{ $family }}</h3>
+  <table class="key-table">
+    <thead><tr><th>Edition</th><th>GVLK</th><th class="notes-col">Notes</th></tr></thead>
+    <tbody>
+    {{ range $items }}
+      <tr{{ if .current }} class="current"{{ end }}>
+        <td>{{ .edition }}{{ if .current }} <span class="badge">current</span>{{ end }}</td>
+        <td><code class="copy" data-copy="{{ .gvlk }}">{{ .gvlk }}</code></td>
+        <td class="notes-col">{{ with .notes }}{{ . }}{{ else }}—{{ end }}</td>
+      </tr>
+    {{ end }}
+    </tbody>
+  </table>
+  {{ end }}
+</section>
+
+<section id="office">
+  <h2>Office · Project · Visio</h2>
+  <p class="muted">
+    All listed editions are Volume License. Install via the
+    <a href="#downloads">Office Deployment Tool</a> with the matching <code>Configuration.xml</code> below
+    (use <code>Channel</code> shown in each row), or manually swap a retail key with
+    <code>ospp.vbs /unpkey:&lt;LAST5&gt;</code> + <code>/inpkey:&lt;GVLK&gt;</code> and <code>/act</code>.
+  </p>
+
+  {{ $byFamily := dict }}
+  {{ range $office }}
+    {{ $f := .family }}
+    {{ $arr := index $byFamily $f | default slice }}
+    {{ $arr = $arr | append . }}
+    {{ $byFamily = merge $byFamily (dict $f $arr) }}
+  {{ end }}
+  {{ range $family, $items := $byFamily }}
+  <h3 class="family-head">{{ $family }}</h3>
+  <table class="key-table">
+    <thead><tr><th>Edition</th><th>Product ID</th><th>GVLK</th><th class="notes-col">Channel</th></tr></thead>
+    <tbody>
+    {{ range $items }}
+      <tr{{ if .current }} class="current"{{ end }}>
+        <td>{{ .edition }}{{ if .current }} <span class="badge">current</span>{{ end }}</td>
+        <td><code class="muted">{{ .product }}</code></td>
+        <td><code class="copy" data-copy="{{ .gvlk }}">{{ .gvlk }}</code></td>
+        <td class="notes-col">{{ .channel }}</td>
+      </tr>
+    {{ end }}
+    </tbody>
+  </table>
+  {{ end }}
+
+  <details class="card">
+    <summary>Sample Configuration.xml — Office Pro Plus 2024 + Project Pro 2024</summary>
+<pre><code>&lt;Configuration&gt;
+  &lt;Add OfficeClientEdition=&quot;64&quot; Channel=&quot;PerpetualVL2024&quot;&gt;
+    &lt;Product ID=&quot;ProPlus2024Volume&quot;   PIDKEY=&quot;XJ2XN-FW8RK-P4HMP-DKDBV-GCVGB&quot;&gt;
+      &lt;Language ID=&quot;en-us&quot;/&gt;
+    &lt;/Product&gt;
+    &lt;Product ID=&quot;ProjectPro2024Volume&quot; PIDKEY=&quot;FQQ23-N4YCY-73HQ3-FM9WC-76HF4&quot;&gt;
+      &lt;Language ID=&quot;en-us&quot;/&gt;
+    &lt;/Product&gt;
+  &lt;/Add&gt;
+  &lt;Updates Enabled=&quot;TRUE&quot; Channel=&quot;PerpetualVL2024&quot;/&gt;
+  &lt;Display Level=&quot;None&quot; AcceptEULA=&quot;TRUE&quot;/&gt;
+  &lt;Property Name=&quot;AUTOACTIVATE&quot; Value=&quot;1&quot;/&gt;
+  &lt;Property Name=&quot;FORCEAPPSHUTDOWN&quot; Value=&quot;TRUE&quot;/&gt;
+&lt;/Configuration&gt;</code></pre>
+  </details>
+
+  <details class="card">
+    <summary>Activation — bare commands</summary>
+<pre><code>cd "C:\Program Files\Microsoft Office\Office16"
+cscript ospp.vbs /sethst:kms.viktorbarzin.me
+cscript ospp.vbs /inpkey:&lt;PASTE-GVLK&gt;
+cscript ospp.vbs /act
+cscript ospp.vbs /dstatus               :: verify --LICENSED--</code></pre>
+  </details>
+</section>
+
+<section id="downloads">
+  <h2>Downloads</h2>
+
+  <h3 class="family-head">Office Deployment Tool</h3>
+  <p>
+    Single binary that installs every Office VL edition listed above, driven by a
+    <code>Configuration.xml</code>.
+  </p>
+  <a class="dl" href="{{ .Site.Data.products.downloads.odt.url }}" target="_blank" rel="noopener">
+    {{ .Site.Data.products.downloads.odt.label }} ↗
+  </a>
+  <p class="hint">{{ .Site.Data.products.downloads.odt.notes }}</p>
+
+  <h3 class="family-head">Windows ISOs</h3>
+  <ul class="dl-list">
+  {{ range .Site.Data.products.downloads.windows }}
+    <li>
+      <a href="{{ .url }}" target="_blank" rel="noopener">{{ .label }} ↗</a>
+      {{ with .notes }}<span class="muted"> — {{ . }}</span>{{ end }}
+    </li>
+  {{ end }}
+  </ul>
+
+  <h3 class="family-head">Bootstrap script</h3>
+  <p>One-shot PowerShell that wires DNS suffix, Office install, and activation:</p>
+  <a class="dl" href="{{ .Site.Params.bootstrapURL }}" target="_blank" rel="noopener">
+    kms-bootstrap.ps1 ↗
+  </a>
+</section>
+
+<section id="faq">
+  <h2>FAQ &amp; gotchas</h2>
+  <div class="faq">
+    <details>
+      <summary>Why won't my retail Office activate?</summary>
+      <p>KMS only grants licenses to <strong>Volume License</strong> editions. Retail / OEM / Microsoft 365
+      keys reject KMS responses. Either reinstall as VL via ODT, or swap the key in place:
+      <code>cscript ospp.vbs /unpkey:&lt;LAST5&gt;</code> followed by
+      <code>cscript ospp.vbs /inpkey:&lt;GVLK&gt;</code> and <code>/act</code>.</p>
+    </details>
+    <details>
+      <summary>What about Windows Home?</summary>
+      <p>Home editions cannot be KMS-activated. Either upgrade to Pro/Enterprise/Education
+      (<code>DISM /Set-Edition</code> or in-place reinstall) or use a retail key.</p>
+    </details>
+    <details>
+      <summary>The first activation fails with 0xC004F038</summary>
+      <p>That's the KMS count threshold: 25 unique clients (or 5 servers) must contact the host before
+      desktop clients can activate. The host caches counts for 30 days. The vlmcsd implementation in
+      this server bypasses that — but real Microsoft KMS hosts enforce it. If you ever swap to a
+      hardware host you may need to pre-seed activations.</p>
+    </details>
+    <details>
+      <summary>Office LTSC vs Microsoft 365 — can they coexist?</summary>
+      <p>No. The Click-to-Run installer refuses side-by-side. Run
+      <code>setup.exe /configure Remove.xml</code> with <code>&lt;Remove All=&quot;TRUE&quot;/&gt;</code>
+      first, then install the VL edition.</p>
+    </details>
+    <details>
+      <summary>How does auto-discovery work?</summary>
+      <p>The Software Protection Service queries DNS for
+      <code>_vlmcs._tcp.&lt;primary-dns-suffix&gt;</code>. If the SRV resolves it connects to that
+      host on the returned port (1688 by default). On this network the suffix is
+      <code>viktorbarzin.lan</code> and the SRV resolves to <code>kms.viktorbarzin.lan:1688</code>.
+      Set the suffix once via System Properties → Computer Name → More → Primary DNS suffix.</p>
+    </details>
+    <details>
+      <summary>How long does a KMS license last?</summary>
+      <p>180 days. The client tries to renew every 7 days; one successful renewal resets the 180-day
+      clock. As long as a machine reaches the KMS once a quarter it stays activated indefinitely.</p>
+    </details>
+    <details>
+      <summary>Where can I see the GVLKs Microsoft publishes?</summary>
+      <p>Windows: <a href="https://learn.microsoft.com/en-us/windows-server/get-started/kms-client-activation-keys" target="_blank" rel="noopener">learn.microsoft.com/.../kms-client-activation-keys</a>.<br>
+      Office / Project / Visio: <a href="https://learn.microsoft.com/en-us/deployoffice/vlactivation/gvlks" target="_blank" rel="noopener">learn.microsoft.com/.../gvlks</a>.</p>
+    </details>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <p>
+      KMS host on this network · vlmcsd · Built with Hugo ·
+      <a href="https://forgejo.viktorbarzin.me/viktor/kms-website" target="_blank" rel="noopener">source</a>
+    </p>
+  </div>
+</footer>
+
+<script src="{{ "js/clipboard.js" | relURL }}"></script>
+</body>
+</html>
