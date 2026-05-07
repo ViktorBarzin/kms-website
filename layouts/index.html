@@ -94,14 +94,10 @@ cscript "C:\Program Files\Microsoft Office\Office16\ospp.vbs" /act</code></pre>
     Click any key to copy.
   </p>
 
-  {{ $byFamily := dict }}
-  {{ range $windows }}
-    {{ $f := .family }}
-    {{ $arr := index $byFamily $f | default slice }}
-    {{ $arr = $arr | append . }}
-    {{ $byFamily = merge $byFamily (dict $f $arr) }}
-  {{ end }}
-  {{ range $family, $items := $byFamily }}
+  {{ $order := slice "Windows 11 / 10" "Windows LTSC" "Legacy desktop" }}
+  {{ range $family := $order }}
+    {{ $items := where $windows "family" $family }}
+    {{ if $items }}
   <h3 class="family-head">{{ $family }}</h3>
   <table class="key-table">
     <thead><tr><th>Edition</th><th>GVLK</th><th class="notes-col">Notes</th></tr></thead>
@@ -115,6 +111,7 @@ cscript "C:\Program Files\Microsoft Office\Office16\ospp.vbs" /act</code></pre>
     {{ end }}
     </tbody>
   </table>
+    {{ end }}
   {{ end }}
 
   <details class="card">
@@ -132,14 +129,10 @@ slmgr /dlv                            :: verify (look for &quot;LICENSED&quot;)<
   <h2>Windows Server</h2>
   <p class="muted">Server SKUs need only 5 unique clients to satisfy the KMS activation count threshold (vs. 25 for desktop).</p>
 
-  {{ $byFamily := dict }}
-  {{ range $servers }}
-    {{ $f := .family }}
-    {{ $arr := index $byFamily $f | default slice }}
-    {{ $arr = $arr | append . }}
-    {{ $byFamily = merge $byFamily (dict $f $arr) }}
-  {{ end }}
-  {{ range $family, $items := $byFamily }}
+  {{ $serverOrder := slice "Windows Server 2025" "Windows Server 2022" "Windows Server 2019" "Windows Server 2016" "Windows Server 2012 R2" "Windows Server 2012" "Windows Server 2008 R2" "Windows Server 2008" }}
+  {{ range $family := $serverOrder }}
+    {{ $items := where $servers "family" $family }}
+    {{ if $items }}
   <h3 class="family-head">{{ $family }}</h3>
   <table class="key-table">
     <thead><tr><th>Edition</th><th>GVLK</th><th class="notes-col">Notes</th></tr></thead>
@@ -153,6 +146,7 @@ slmgr /dlv                            :: verify (look for &quot;LICENSED&quot;)<
     {{ end }}
     </tbody>
   </table>
+    {{ end }}
   {{ end }}
 </section>
 
@@ -165,14 +159,10 @@ slmgr /dlv                            :: verify (look for &quot;LICENSED&quot;)<
     <code>ospp.vbs /unpkey:&lt;LAST5&gt;</code> + <code>/inpkey:&lt;GVLK&gt;</code> and <code>/act</code>.
   </p>
 
-  {{ $byFamily := dict }}
-  {{ range $office }}
-    {{ $f := .family }}
-    {{ $arr := index $byFamily $f | default slice }}
-    {{ $arr = $arr | append . }}
-    {{ $byFamily = merge $byFamily (dict $f $arr) }}
-  {{ end }}
-  {{ range $family, $items := $byFamily }}
+  {{ $officeOrder := slice "Office LTSC 2024" "Office LTSC 2021" "Office 2019" "Office 2016" }}
+  {{ range $family := $officeOrder }}
+    {{ $items := where $office "family" $family }}
+    {{ if $items }}
   <h3 class="family-head">{{ $family }}</h3>
   <table class="key-table">
     <thead><tr><th>Edition</th><th>Product ID</th><th>GVLK</th><th class="notes-col">Channel</th></tr></thead>
@@ -187,6 +177,7 @@ slmgr /dlv                            :: verify (look for &quot;LICENSED&quot;)<
     {{ end }}
     </tbody>
   </table>
+    {{ end }}
   {{ end }}
 
   <details class="card">
