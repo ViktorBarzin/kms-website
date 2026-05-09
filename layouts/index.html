@@ -18,7 +18,7 @@
       <span class="logo">⊞</span>
       <div>
         <h1>kms.viktorbarzin.me</h1>
-        <p class="tag">Self-hosted KMS for Windows · Office · Project · Visio</p>
+        <p class="tag">Free public KMS · Windows · Office · Project · Visio · No signup, no tracking</p>
       </div>
     </div>
     <nav>
@@ -36,22 +36,22 @@
   <div class="wrap">
     <h2>Activate Microsoft Volume License products in seconds.</h2>
     <p class="lede">
-      One private KMS host, every supported edition. Auto-discovery via DNS SRV from inside the network,
-      manual <code>/skms</code> from outside. No keys to remember — just install a Volume License edition
-      and it activates itself.
+      Public KMS host. Point any VL Windows / Office / Project / Visio at it and it activates —
+      no keys to remember, no account, no logs of personal data beyond the activation event itself.
+      Run the one-liner below, or use the GVLK tables further down.
     </p>
     <div class="kms-target">
       <div class="kms-target-item">
-        <span class="muted">Internal LAN host</span>
+        <span class="muted">Public KMS host</span>
         <code class="copy" data-copy="{{ .Site.Params.kmsHost }}:{{ .Site.Params.kmsPort }}">{{ .Site.Params.kmsHost }}:{{ .Site.Params.kmsPort }}</code>
       </div>
       <div class="kms-target-item">
-        <span class="muted">External / off-LAN host</span>
-        <code class="copy" data-copy="{{ .Site.Params.kmsHostExt }}:{{ .Site.Params.kmsPort }}">{{ .Site.Params.kmsHostExt }}:{{ .Site.Params.kmsPort }}</code>
+        <span class="muted">Reachable from</span>
+        <code>any IPv4 internet</code>
       </div>
       <div class="kms-target-item">
-        <span class="muted">Auto-discovery SRV</span>
-        <code class="copy" data-copy="_vlmcs._tcp.viktorbarzin.lan">_vlmcs._tcp.viktorbarzin.lan</code>
+        <span class="muted">Cost</span>
+        <code>free, forever</code>
       </div>
     </div>
   </div>
@@ -60,24 +60,29 @@
 <main class="wrap">
 
 <section id="quickstart">
-  <h2>Quick start — fully automatic on a new machine</h2>
+  <h2>Quick start</h2>
   <p>
-    On the home / lab network, a freshly-installed Volume License edition will activate itself
-    once Windows can find the SRV record. The bootstrap script below sets the Primary DNS Suffix,
-    optionally installs Office + Project (LTSC 2024 VL), triggers <code>slmgr /ato</code> + <code>ospp.vbs /act</code>,
-    and prompts for a single reboot.
+    Open <strong>PowerShell as Administrator</strong> on a Volume License Windows install
+    and paste the one-liner. The script asks what you want to activate (Windows, Office,
+    Project, Visio), points each at <code>{{ .Site.Params.kmsHost }}:{{ .Site.Params.kmsPort }}</code>,
+    runs the activation, and prints the result.
   </p>
   <div class="card terminal">
-    <div class="card-head"><span>PowerShell (run as Administrator)</span><button class="btn-copy" data-copy-target="quickstart-cmd">Copy</button></div>
-<pre id="quickstart-cmd"><code>powershell -ExecutionPolicy Bypass -File &quot;\\nas.viktorbarzin.lan\Emo shared\kms-bootstrap.ps1&quot;</code></pre>
+    <div class="card-head"><span>One-liner — interactive</span><button class="btn-copy" data-copy-target="quickstart-cmd">Copy</button></div>
+<pre id="quickstart-cmd"><code>iwr -UseBasicParsing https://{{ .Site.Params.kmsHost }}{{ .Site.Params.bootstrapURL }} | iex</code></pre>
   </div>
-  <p class="hint">Off-LAN? Skip auto-discovery and pin the host explicitly:</p>
+  <p class="hint">
+    Prefer to read the script first? <a href="{{ .Site.Params.bootstrapURL }}">View kms-bootstrap.ps1</a>
+    or <a href="{{ .Site.Params.setupURL }}">setup-kms.ps1</a> (a smaller, non-interactive variant
+    that just points Windows at the KMS host and runs <code>slmgr /ato</code>).
+  </p>
+  <p class="hint">Want to skip the script entirely? Two cmd.exe lines do the same job:</p>
   <div class="card terminal">
-    <div class="card-head"><span>cmd.exe — explicit KMS host</span><button class="btn-copy" data-copy-target="explicit-cmd">Copy</button></div>
-<pre id="explicit-cmd"><code>slmgr /skms kms.viktorbarzin.me
+    <div class="card-head"><span>cmd.exe — manual</span><button class="btn-copy" data-copy-target="explicit-cmd">Copy</button></div>
+<pre id="explicit-cmd"><code>slmgr /skms {{ .Site.Params.kmsHost }}:{{ .Site.Params.kmsPort }}
 slmgr /ato
 
-cscript "C:\Program Files\Microsoft Office\Office16\ospp.vbs" /sethst:kms.viktorbarzin.me
+cscript "C:\Program Files\Microsoft Office\Office16\ospp.vbs" /sethst:{{ .Site.Params.kmsHost }}
 cscript "C:\Program Files\Microsoft Office\Office16\ospp.vbs" /act</code></pre>
   </div>
 </section>
@@ -117,11 +122,11 @@ cscript "C:\Program Files\Microsoft Office\Office16\ospp.vbs" /act</code></pre>
   <details class="card">
     <summary>How to use a GVLK on Windows</summary>
 <pre><code>:: open cmd.exe as Administrator
-slmgr /upk                            :: remove existing key
-slmgr /ipk &lt;PASTE-GVLK-HERE&gt;          :: install GVLK
-slmgr /skms kms.viktorbarzin.me       :: optional: skip auto-discovery
-slmgr /ato                            :: activate
-slmgr /dlv                            :: verify (look for &quot;LICENSED&quot;)</code></pre>
+slmgr /upk                                       :: remove existing key
+slmgr /ipk &lt;PASTE-GVLK-HERE&gt;                     :: install GVLK
+slmgr /skms {{ .Site.Params.kmsHost }}:{{ .Site.Params.kmsPort }}     :: point at this server
+slmgr /ato                                       :: activate
+slmgr /dlv                                       :: verify (look for &quot;LICENSED&quot;)</code></pre>
   </details>
 </section>
 
@@ -201,7 +206,8 @@ slmgr /dlv                            :: verify (look for &quot;LICENSED&quot;)<
   <details class="card">
     <summary>Activation — bare commands</summary>
 <pre><code>cd "C:\Program Files\Microsoft Office\Office16"
-cscript ospp.vbs /sethst:kms.viktorbarzin.me
+cscript ospp.vbs /sethst:{{ .Site.Params.kmsHost }}
+cscript ospp.vbs /setprt:{{ .Site.Params.kmsPort }}
 cscript ospp.vbs /inpkey:&lt;PASTE-GVLK&gt;
 cscript ospp.vbs /act
 cscript ospp.vbs /dstatus               :: verify --LICENSED--</code></pre>
@@ -231,11 +237,18 @@ cscript ospp.vbs /dstatus               :: verify --LICENSED--</code></pre>
   {{ end }}
   </ul>
 
-  <h3 class="family-head">Bootstrap script</h3>
-  <p>One-shot PowerShell that wires DNS suffix, Office install, and activation:</p>
-  <a class="dl" href="{{ .Site.Params.bootstrapURL }}" target="_blank" rel="noopener">
-    kms-bootstrap.ps1 ↗
-  </a>
+  <h3 class="family-head">PowerShell scripts</h3>
+  <p>Both scripts are open-source, single-file, no dependencies. Read before running.</p>
+  <ul class="dl-list">
+    <li>
+      <a href="{{ .Site.Params.bootstrapURL }}" target="_blank" rel="noopener">kms-bootstrap.ps1 ↗</a>
+      <span class="muted"> — interactive: prompts for Windows / Office / Project / Visio and activates each.</span>
+    </li>
+    <li>
+      <a href="{{ .Site.Params.setupURL }}" target="_blank" rel="noopener">setup-kms.ps1 ↗</a>
+      <span class="muted"> — minimal: <code>slmgr /skms</code> + <code>/ato</code>. No Office install.</span>
+    </li>
+  </ul>
 </section>
 
 <section id="faq">
@@ -267,12 +280,31 @@ cscript ospp.vbs /dstatus               :: verify --LICENSED--</code></pre>
       first, then install the VL edition.</p>
     </details>
     <details>
-      <summary>How does auto-discovery work?</summary>
-      <p>The Software Protection Service queries DNS for
-      <code>_vlmcs._tcp.&lt;primary-dns-suffix&gt;</code>. If the SRV resolves it connects to that
-      host on the returned port (1688 by default). On this network the suffix is
-      <code>viktorbarzin.lan</code> and the SRV resolves to <code>kms.viktorbarzin.lan:1688</code>.
-      Set the suffix once via System Properties → Computer Name → More → Primary DNS suffix.</p>
+      <summary>How does auto-discovery work? Do I need it?</summary>
+      <p>No — the Quick Start one-liner pins the host explicitly so auto-discovery is irrelevant
+      for internet visitors. It exists for managed corporate networks: the Software Protection
+      Service queries DNS for <code>_vlmcs._tcp.&lt;primary-dns-suffix&gt;</code>, and if the SRV
+      resolves, Windows connects there on the returned port. If you want it on your own LAN,
+      publish a SRV record pointing at <code>{{ .Site.Params.kmsHost }}:{{ .Site.Params.kmsPort }}</code>
+      (or any vlmcsd you self-host) and set the matching DNS suffix on each client.</p>
+    </details>
+    <details>
+      <summary>Will my activation be logged? What about privacy?</summary>
+      <p>The KMS protocol itself sends your machine's hostname, your client IP (from the TCP
+      socket), and the product ID being activated. The server records the event in a log so
+      the operator can see overall traffic. No personal data beyond what the KMS protocol
+      itself transmits is collected; nothing is shared, sold, or retained beyond the operator's
+      monitoring. If that bothers you, run your own vlmcsd — it's a single binary, the source
+      is on <a href="https://github.com/Wind4/vlmcsd" target="_blank" rel="noopener">GitHub</a>.</p>
+    </details>
+    <details>
+      <summary>Is this legal? Can I use it for anything?</summary>
+      <p>KMS activates only <strong>Volume License (VL)</strong> editions of Microsoft software.
+      VL keys are licensed per-organization by Microsoft; using a VL edition without a real VL
+      agreement violates Microsoft's licensing terms. This server exists for personal lab /
+      learning / unsupported-OS-revival use. If you don't have a VL agreement, evaluate
+      Windows + Office through Microsoft's free trial channels instead. The site operator is
+      not responsible for how visitors use the host.</p>
     </details>
     <details>
       <summary>How long does a KMS license last?</summary>
