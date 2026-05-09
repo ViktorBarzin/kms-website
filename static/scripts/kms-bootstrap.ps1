@@ -17,7 +17,7 @@
 # Custom KMS host:
 #   $env:KMS_HOST = 'kms.example.com'; iwr ... | iex
 #
-# Source: https://forgejo.viktorbarzin.me/viktor/kms-website
+# Source: https://kms.viktorbarzin.me/scripts/kms-bootstrap.ps1
 # Licence: MIT, no warranty, KMS activates Volume License SKUs only.
 
 [CmdletBinding()]
@@ -183,4 +183,4 @@ if ($installList.Count -gt 0) { Install-Odt-Bundle $installList }
 Write-Host ""
 Step "Done."
 Write-Host "    Re-run any time to re-check status. KMS licences renew automatically every 7 days."
-Write-Host "    Operator-side: this activation has been logged. Privacy notes: https://kms.viktorbarzin.me/#faq"
+Write-Host "    Privacy: see https://kms.viktorbarzin.me/#faq"

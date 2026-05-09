@@ -63,18 +63,30 @@
   <h2>Quick start</h2>
   <p>
     Open <strong>PowerShell as Administrator</strong> on a Volume License Windows install
-    and paste the one-liner. The script asks what you want to activate (Windows, Office,
-    Project, Visio), points each at <code>{{ .Site.Params.kmsHost }}:{{ .Site.Params.kmsPort }}</code>,
+    and paste one of the one-liners below. Each pre-selects what to activate, points
+    every product at <code>{{ .Site.Params.kmsHost }}:{{ .Site.Params.kmsPort }}</code>,
     runs the activation, and prints the result.
   </p>
-  <div class="card terminal">
-    <div class="card-head"><span>One-liner — interactive</span><button class="btn-copy" data-copy-target="quickstart-cmd">Copy</button></div>
-<pre id="quickstart-cmd"><code>iwr -UseBasicParsing https://{{ .Site.Params.kmsHost }}{{ .Site.Params.bootstrapURL }} | iex</code></pre>
+  <div class="quickstart-grid">
+    <div class="card terminal">
+      <div class="card-head"><span>Windows only</span><button class="btn-copy" data-copy-target="quickstart-win">Copy</button></div>
+<pre id="quickstart-win"><code>$env:KMS_AUTO='win'; iwr -UseBasicParsing https://{{ .Site.Params.kmsHost }}{{ .Site.Params.bootstrapURL }} | iex</code></pre>
+    </div>
+    <div class="card terminal">
+      <div class="card-head"><span>Office / Project / Visio</span><button class="btn-copy" data-copy-target="quickstart-office">Copy</button></div>
+<pre id="quickstart-office"><code>$env:KMS_AUTO='office,project,visio'; iwr -UseBasicParsing https://{{ .Site.Params.kmsHost }}{{ .Site.Params.bootstrapURL }} | iex</code></pre>
+    </div>
+    <div class="card terminal">
+      <div class="card-head"><span>Windows + Office</span><button class="btn-copy" data-copy-target="quickstart-both">Copy</button></div>
+<pre id="quickstart-both"><code>$env:KMS_AUTO='win,office,project,visio'; iwr -UseBasicParsing https://{{ .Site.Params.kmsHost }}{{ .Site.Params.bootstrapURL }} | iex</code></pre>
+    </div>
   </div>
   <p class="hint">
-    Prefer to read the script first? <a href="{{ .Site.Params.bootstrapURL }}">View kms-bootstrap.ps1</a>
-    or <a href="{{ .Site.Params.setupURL }}">setup-kms.ps1</a> (a smaller, non-interactive variant
-    that just points Windows at the KMS host and runs <code>slmgr /ato</code>).
+    Want to be asked instead? Drop the <code>$env:KMS_AUTO=...;</code> prefix —
+    the script will prompt for each product. Prefer to read it first?
+    <a href="{{ .Site.Params.bootstrapURL }}">View kms-bootstrap.ps1</a> or
+    <a href="{{ .Site.Params.setupURL }}">setup-kms.ps1</a> (a smaller variant
+    that just runs <code>slmgr /skms</code> + <code>slmgr /ato</code>).
   </p>
   <p class="hint">Want to skip the script entirely? Two cmd.exe lines do the same job:</p>
   <div class="card terminal">
@@ -241,11 +253,11 @@ cscript ospp.vbs /dstatus               :: verify --LICENSED--</code></pre>
   <p>Both scripts are open-source, single-file, no dependencies. Read before running.</p>
   <ul class="dl-list">
     <li>
-      <a href="{{ .Site.Params.bootstrapURL }}" target="_blank" rel="noopener">kms-bootstrap.ps1 ↗</a>
+      <a href="{{ .Site.Params.bootstrapURL }}" download="kms-bootstrap.ps1" rel="noopener">kms-bootstrap.ps1 ↓</a>
       <span class="muted"> — interactive: prompts for Windows / Office / Project / Visio and activates each.</span>
     </li>
     <li>
-      <a href="{{ .Site.Params.setupURL }}" target="_blank" rel="noopener">setup-kms.ps1 ↗</a>
+      <a href="{{ .Site.Params.setupURL }}" download="setup-kms.ps1" rel="noopener">setup-kms.ps1 ↓</a>
       <span class="muted"> — minimal: <code>slmgr /skms</code> + <code>/ato</code>. No Office install.</span>
     </li>
   </ul>

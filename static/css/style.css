@@ -142,6 +142,19 @@ section > p:first-of-type { margin-top: 0; }
 .card pre { margin: 0; padding: 18px 20px; overflow-x: auto; }
 .card pre code { color: var(--text); font-size: 13.5px; line-height: 1.6; }
 
+.quickstart-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin: 16px 0;
+}
+.quickstart-grid .card { margin: 0; }
+.quickstart-grid .card pre { padding: 14px 16px; }
+.quickstart-grid .card pre code { font-size: 12.5px; word-break: break-all; white-space: pre-wrap; }
+@media (max-width: 980px) {
+  .quickstart-grid { grid-template-columns: 1fr; }
+}
+
 .card details summary, details summary {
   cursor: pointer; padding: 14px 18px; font-weight: 600; user-select: none;
   list-style: none;

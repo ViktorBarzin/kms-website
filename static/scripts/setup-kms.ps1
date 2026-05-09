@@ -10,7 +10,7 @@
 # Or with a custom KMS host (e.g. self-hosted):
 #   $env:KMS_HOST = 'kms.example.com'; iwr ... | iex
 #
-# Source: https://forgejo.viktorbarzin.me/viktor/kms-website
+# Source: https://kms.viktorbarzin.me/scripts/setup-kms.ps1
 # Licence: MIT, no warranty, KMS activates Volume License SKUs only.
 
 [CmdletBinding()]
