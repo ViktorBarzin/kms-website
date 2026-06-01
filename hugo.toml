@@ -14,6 +14,8 @@ disableKinds = ["taxonomy", "term", "RSS", "sitemap", "404"]
   kmsPort      = 1688
   bootstrapURL = "/scripts/kms-bootstrap.ps1"
   setupURL     = "/scripts/setup-kms.ps1"
+  winURL       = "/scripts/activate-windows.ps1"
+  officeURL    = "/scripts/activate-office.ps1"
   keysURL      = "/keys.json"
 
 # Publish data/products.yaml as machine-readable JSON at /keys.json so the
