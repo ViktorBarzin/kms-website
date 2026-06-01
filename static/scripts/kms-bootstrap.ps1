@@ -253,8 +253,47 @@ function Get-LatestOfficeProduct([string]$label) {
 # we serve a known-good copy from our own /scripts). $env:KMS_ODT_URL overrides.
 # Invoke-Odt runs ONE setup.exe /configure with the given <Configuration> XML and
 # is reused for both install (<Add>) and uninstall (<Remove>).
-$script:ODT_URL = $(if ($env:KMS_ODT_URL) { $env:KMS_ODT_URL } else { 'https://kms.viktorbarzin.me/scripts/odt-setup.exe' })
+$script:ODT_URL   = $(if ($env:KMS_ODT_URL) { $env:KMS_ODT_URL } else { 'https://kms.viktorbarzin.me/scripts/odt-setup.exe' })
+# ODT writes its log here (the config XMLs point <Logging> at it). Read back on
+# failure so a non-zero / incomplete install reports the real error code instead
+# of a bare "ospp.vbs not found". Cleared at the start of every Invoke-Odt run.
+$script:OdtLogDir = Join-Path $env:TEMP 'kms-odt-logs'
+
+# Tail of the newest ODT log - the setup.exe error code lives here on failure.
+function Get-OdtLogTail([int]$lines = 20) {
+    $log = Get-ChildItem -Path $script:OdtLogDir -Filter *.log -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    if (-not $log) { return '' }
+    return ((Get-Content -LiteralPath $log.FullName -Tail $lines -ErrorAction SilentlyContinue) -join ' | ')
+}
+
+# "A reboot is pending" probe. C2R half-completes an install when a prior removal
+# left the servicing stack pending - the usual cause of an install run right after
+# uninstalling the bundled consumer Office.
+function Test-PendingReboot {
+    if (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending') { return $true }
+    if (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired') { return $true }
+    $sm = Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager' -Name PendingFileRenameOperations -ErrorAction SilentlyContinue
+    return [bool]$sm.PendingFileRenameOperations
+}
+
+# Poll until the C2R install actually lands. setup.exe /configure can return before
+# the Click-to-Run service finishes the multi-GB install, so trust on-disk state
+# (ospp.vbs + the product in ProductReleaseIds), not setup.exe's return. Heartbeat
+# so a long download does not look hung.
+function Wait-OfficeInstalled([string]$product, [int]$timeoutSec = 1800) {
+    $sw = [Diagnostics.Stopwatch]::StartNew(); $next = 0
+    while ($sw.Elapsed.TotalSeconds -lt $timeoutSec) {
+        if ((Find-Ospp) -and ((Get-AllOfficeC2R) -contains $product)) { return $true }
+        if ($sw.Elapsed.TotalSeconds -ge $next) { Write-Host "    still installing $product... ($([int]$sw.Elapsed.TotalSeconds)s)"; $next += 20 }
+        Start-Sleep -Seconds 5
+    }
+    return $false
+}
+
 function Invoke-Odt([string]$configXml, [string]$stepMsg) {
+    Remove-Item -Path (Join-Path $script:OdtLogDir '*') -Force -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Force -Path $script:OdtLogDir | Out-Null
     $tmp = Join-Path $env:TEMP "kms-odt-$(Get-Random)"
     New-Item -ItemType Directory -Force -Path $tmp | Out-Null
     try {
@@ -268,7 +307,18 @@ function Invoke-Odt([string]$configXml, [string]$stepMsg) {
         $cfg = Join-Path $tmp 'config.xml'
         $configXml | Set-Content -Path $cfg -Encoding UTF8
         Step $stepMsg
-        Start-Process -FilePath $setup -ArgumentList '/configure', "`"$cfg`"" -Wait
+        $p = Start-Process -FilePath $setup -ArgumentList '/configure', "`"$cfg`"" -Wait -PassThru
+        $code = $p.ExitCode
+        # 0 = success, 3010 = success/reboot-required. Anything else is a real ODT
+        # failure - surface the log tail (carries the error code) so we can diagnose.
+        if ($code -ne 0 -and $code -ne 3010) {
+            $tail = Get-OdtLogTail
+            Bad "Office Deployment Tool failed (setup.exe exit $code)."
+            if ($tail) { Write-Host "    ODT log: $tail" }
+            Send-Diag 'odt' 'fail' "exit=$code; $tail"
+            return $false
+        }
+        if ($code -eq 3010) { Warn "ODT reports a reboot is required to finish." }
         return $true
     }
     finally { Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue }
@@ -283,9 +333,18 @@ function Reinstall-OfficeVL([string]$product, [string]$channel) {
   </Add>
   <Display Level="None" AcceptEULA="TRUE" />
   <Property Name="FORCEAPPSHUTDOWN" Value="TRUE" />
+  <Logging Level="Standard" Path="$($script:OdtLogDir)" />
 </Configuration>
 "@
-    return (Invoke-Odt $xml "Installing $product (multi-GB download + reinstall; several minutes)")
+    if (-not (Invoke-Odt $xml "Installing $product (multi-GB download + reinstall; several minutes)")) { return $false }
+    # setup.exe returning is NOT proof Office is on disk - verify it actually landed.
+    if (Wait-OfficeInstalled $product) { OK "$product installed"; return $true }
+    $reboot = Test-PendingReboot
+    $hint = if ($reboot) { 'A reboot is pending - reboot, then re-run the one-liner (it skips straight to the install).' } else { 'Re-run the one-liner; if it still fails, reboot first to clear the servicing stack.' }
+    Bad "$product install did not complete (ospp.vbs / $product not registered). $hint"
+    $tail = Get-OdtLogTail; if ($tail) { Write-Host "    ODT log: $tail" }
+    Send-Diag 'odt' 'install-incomplete' "product=$product; reboot=$reboot; $tail"
+    return $false
 }
 
 # Uninstall specific Click-to-Run products (the incompatible retail/M365 Office
@@ -300,6 +359,7 @@ $items
   </Remove>
   <Display Level="None" AcceptEULA="TRUE" />
   <Property Name="FORCEAPPSHUTDOWN" Value="TRUE" />
+  <Logging Level="Standard" Path="$($script:OdtLogDir)" />
 </Configuration>
 "@
     return (Invoke-Odt $xml "Uninstalling incompatible Office: $($products -join ', ')")
@@ -332,6 +392,16 @@ Consequences:$rm
     if ($incompat) {
         if (-not (Uninstall-OfficeC2R $incompat)) { Bad "Uninstall of incompatible Office failed; aborting before VL install."; Send-Diag $label.ToLower() 'uninstall-fail' ($incompat -join ','); return $null }
         Send-Diag $label.ToLower() 'uninstalled-incompatible' ($incompat -join ',')
+        # Removing the bundled consumer Office usually leaves the servicing stack
+        # pending a reboot; a VL install in the SAME session then half-completes with
+        # no ospp.vbs. Stop here and have the user reboot + re-run - the script is
+        # idempotent and (no incompatible Office left) goes straight to the install.
+        if (Test-PendingReboot) {
+            Warn "Incompatible Office removed, but a reboot is required before the Volume License install."
+            Write-Host "    Please REBOOT, then re-run the one-liner - it will skip the uninstall and install $target directly."
+            Send-Diag $label.ToLower() 'reboot-required-after-uninstall' $target
+            return $null
+        }
     }
     if (-not (Reinstall-OfficeVL $target $channel)) { return $null }
     return $target
