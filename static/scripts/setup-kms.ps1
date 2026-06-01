@@ -1,7 +1,9 @@
 # setup-kms.ps1
 #
 # Minimal KMS-host wiring for an already-installed Volume License Windows.
-# Runs `slmgr /skms <host>:<port>` + `slmgr /ato` and prints the licence status.
+# Pins the KMS host, then activates only if not already licensed.
+# Idempotent — safe to re-run: if Windows is already licensed it reports the
+# remaining days and exits without re-contacting the KMS server.
 # Does NOT install Office. Does NOT change DNS suffix. Pin only.
 #
 # Usage:
@@ -30,38 +32,54 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
     return
 }
 
-Step "KMS host = $KmsHost`:$KmsPort"
+# Locale-independent license probe (slmgr /dlv text is localized; the WMI
+# LicenseStatus integer is not). 1 = Licensed. Returns $null if no KMS-client
+# Windows SKU is installed. GracePeriodRemaining is in minutes.
+function Get-WindowsLicense {
+    $q = "SELECT LicenseStatus, GracePeriodRemaining FROM SoftwareLicensingProduct WHERE Name LIKE 'Windows%' AND PartialProductKey IS NOT NULL"
+    $p = $null
+    try { $p = Get-CimInstance -Query $q -ErrorAction Stop | Select-Object -First 1 }
+    catch { try { $p = Get-WmiObject -Query $q -ErrorAction Stop | Select-Object -First 1 } catch {} }
+    if (-not $p) { return $null }
+    [pscustomobject]@{ Licensed = ($p.LicenseStatus -eq 1); DaysLeft = [int]([math]::Round($p.GracePeriodRemaining / 1440)) }
+}
+
 $slmgr = "$env:WINDIR\System32\slmgr.vbs"
 
-Step "slmgr /skms $KmsHost`:$KmsPort"
+# Pin the KMS host. Idempotent: re-running just re-sets the same value.
+Step "Pinning KMS host -> $KmsHost`:$KmsPort"
 $out = & cscript //Nologo $slmgr /skms "$KmsHost`:$KmsPort" 2>&1
-Write-Host $out
-if ($LASTEXITCODE -ne 0) { Bad "slmgr /skms failed (exit $LASTEXITCODE)"; return }
+if ($LASTEXITCODE -ne 0) { Bad "slmgr /skms failed (exit $LASTEXITCODE): $out"; return }
 OK "KMS host pinned"
 
-Step "slmgr /ato (activate)"
-$out = & cscript //Nologo $slmgr /ato 2>&1
-Write-Host $out
-if ($LASTEXITCODE -ne 0) {
-    Bad "slmgr /ato failed (exit $LASTEXITCODE)"
-    Write-Host ""
-    Write-Host "Most common cause: this Windows is not a Volume License edition."
-    Write-Host "KMS activates only VL SKUs (Pro, Enterprise, Education, LTSC, Server)."
-    Write-Host "Home / retail / OEM keys reject KMS responses. See https://kms.viktorbarzin.me/#faq"
+$lic = Get-WindowsLicense
+if ($null -eq $lic) {
+    Bad "No KMS-client (Volume License) Windows SKU detected."
+    Write-Host "    Install a GVLK first:  slmgr /ipk <GVLK>   (see https://kms.viktorbarzin.me/#windows)"
     return
 }
-OK "Activation request sent"
 
-Step "slmgr /dlv (status)"
-$out = & cscript //Nologo $slmgr /dlv 2>&1
+# Idempotent: already activated -> don't re-hit the KMS server. The pinned host
+# above means Windows keeps auto-renewing every 7 days on its own.
+if ($lic.Licensed) {
+    Write-Host ""
+    Write-Host "==> Already licensed via KMS ($($lic.DaysLeft) days remaining). Nothing to do." -ForegroundColor Green
+    Write-Host "    Host is pinned to $KmsHost; Windows auto-renews every 7 days."
+    return
+}
+
+Step "Activating (slmgr /ato)"
+$out = & cscript //Nologo $slmgr /ato 2>&1
 Write-Host $out
 
-if ($out -match 'License Status:\s*Licensed') {
+$lic = Get-WindowsLicense
+if ($lic.Licensed) {
     Write-Host ""
-    Write-Host "==> SUCCESS: Windows is now licensed via KMS." -ForegroundColor Green
-    Write-Host "    Licence renews automatically every 7 days; lasts 180 days per renewal."
+    Write-Host "==> SUCCESS: Windows is now licensed via KMS ($($lic.DaysLeft) days)." -ForegroundColor Green
+    Write-Host "    Renews automatically every 7 days; lasts 180 days per renewal."
 } else {
     Write-Host ""
-    Write-Host "==> Activation request sent but status is not 'Licensed' yet." -ForegroundColor Yellow
-    Write-Host "    Re-run 'slmgr /dlv' in a minute, or check https://kms.viktorbarzin.me/#faq"
+    Write-Host "==> Activation did not stick." -ForegroundColor Yellow
+    Write-Host "    Most common cause: this Windows is not a Volume License edition"
+    Write-Host "    (Home / retail / OEM reject KMS). See https://kms.viktorbarzin.me/#faq"
 }
