@@ -271,7 +271,7 @@ function Get-OdtLogTail([int]$lines = 6) {
     $logs = Get-ChildItem -Path @($script:OdtLogDir, $env:TEMP) -Filter *.log -ErrorAction SilentlyContinue |
         Where-Object { $_.LastWriteTime -gt (Get-Date).AddMinutes(-30) } |
         Sort-Object LastWriteTime -Descending | Select-Object -First 6
-    $rx = 'error code|errorcode|errormessage|we.re sorry|cannot install|already installed|in use|being used|0x[0-9a-fA-F]{8}|\b1603\b|\b17\d{3}\b|\b30\d{3}\b'
+    $rx = 'error code|errorcode|errormessage|we.re sorry|cannot install|already installed|in use|being used|prereq|sxsmsi|0x[0-9a-fA-F]{8}|\b1603\b|\b17\d{3}\b|\b30\d{3}\b'
     foreach ($log in $logs) {
         $err = Get-Content -LiteralPath $log.FullName -ErrorAction SilentlyContinue |
             Where-Object { $_ -match $rx } | Select-Object -Last $lines
@@ -289,8 +289,13 @@ function Get-OfficeState {
     $cbs  = [bool](Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending')
     $wu   = [bool](Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired')
     $pfro = @((Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager' -ErrorAction SilentlyContinue).PendingFileRenameOperations | Where-Object { $_ -match 'Office|ClickToRun' })
+    # Windows Installer health: the C2R 'SXSMSI' prereq fails (1603) when msiserver
+    # is disabled, an MSI op is mid-flight (InProgress), or the disk is full.
+    $msi  = Get-Service msiserver -ErrorAction SilentlyContinue
+    $inprog = [bool](Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Installer\InProgress')
+    $free = try { [int]((Get-PSDrive C -ErrorAction Stop).Free / 1GB) } catch { -1 }
     $svc  = "$((Get-Service ClickToRunSvc -ErrorAction SilentlyContinue).Status)"
-    "prids=[$($cfg.ProductReleaseIds)] plat=$($cfg.Platform) roots=$($roots.Count) reboot[cbs=$cbs wu=$wu officePFRO=$($pfro.Count)] c2rsvc=$svc ospp=$([bool](Find-Ospp))"
+    "prids=[$($cfg.ProductReleaseIds)] roots=$($roots.Count) reboot[cbs=$cbs wu=$wu officePFRO=$($pfro.Count)] msi=$($msi.Status)/$($msi.StartType) inprog=$inprog freeGB=$free c2rsvc=$svc ospp=$([bool](Find-Ospp))"
 }
 
 # "A reboot is pending" probe (all signals) - used for advisory messages/telemetry.
@@ -301,12 +306,23 @@ function Test-PendingReboot {
     return [bool]$sm.PendingFileRenameOperations
 }
 
-# STRONG reboot signals only (CBS / Windows Update) - reliably "a real reboot is
-# needed". Used to GATE an install (PendingFileRenameOperations is too noisy to
-# block on - it is set by lots of unrelated software).
-function Test-RebootRequiredHard {
-    (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending') -or
-    (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired')
+# Office-blocking pending reboot: CBS/WU OR an Office-related pending file-rename.
+# Office's C2R installer fails its SXSMSI prereq (1603) while a file-rename is
+# queued, so these specifically must be cleared before an install.
+function Test-OfficeRebootPending {
+    if (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending') { return $true }
+    if (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired') { return $true }
+    $sm = Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager' -Name PendingFileRenameOperations -ErrorAction SilentlyContinue
+    return [bool](@($sm.PendingFileRenameOperations | Where-Object { $_ -match 'Office|ClickToRun' }))
+}
+
+# Restart guidance. The crucial bit: a normal "Shut down" on Win10/11 does NOT
+# clear pending file operations (Fast Startup hibernates the kernel) - only a real
+# "Restart" runs them. Users routinely hit this.
+function Show-RestartHint {
+    Write-Host "    A pending operation must clear first - use Start -> Power -> RESTART" -ForegroundColor Yellow
+    Write-Host "    (NOT 'Shut down': Windows Fast Startup skips pending file operations on shutdown)." -ForegroundColor Yellow
+    Write-Host "    Then re-run the one-liner."
 }
 
 # Poll until the C2R install actually lands. setup.exe /configure can return before
@@ -344,15 +360,15 @@ function Invoke-Odt([string]$configXml, [string]$stepMsg) {
         # 0 = success, 3010 = success/reboot-required. Anything else is a real ODT
         # failure - surface the log tail (carries the error code) so we can diagnose.
         if ($code -ne 0 -and $code -ne 3010) {
-            $reboot = Test-PendingReboot
             Bad "Office Deployment Tool failed (setup.exe exit $code)."
-            # 1603 = fatal install error; right after removing the bundled consumer
-            # Office it almost always means the old install is still pending a reboot.
-            if ($reboot -or $code -eq 1603) {
-                Write-Host "    A reboot is needed to finish removing the previous Office. REBOOT, then re-run the one-liner - it installs the Volume License Office directly." -ForegroundColor Yellow
+            # Only blame a reboot when one is ACTUALLY pending (not on every 1603).
+            if (Test-OfficeRebootPending) {
+                Show-RestartHint
+            } elseif ($code -eq 1603) {
+                Write-Host "    Exit 1603 = a Windows prerequisite failed - commonly Windows Installer disabled, an interrupted MSI (InProgress), or low disk. Diagnostics sent." -ForegroundColor Yellow
             }
             Write-Host "    (anonymous diagnostics sent to help debug this - no keys/hostname)"
-            Send-Diag 'odt' 'fail' "exit=$code; reboot=$reboot; $(Get-OfficeState); odt: $(Get-OdtLogTail)"
+            Send-Diag 'odt' 'fail' "exit=$code; $(Get-OfficeState); odt: $(Get-OdtLogTail)"
             return $false
         }
         if ($code -eq 3010) { Warn "ODT reports a reboot is required to finish." }
@@ -362,14 +378,21 @@ function Invoke-Odt([string]$configXml, [string]$stepMsg) {
 }
 
 function Reinstall-OfficeVL([string]$product, [string]$channel) {
-    # A hard pending-reboot (CBS/WU) means a prior Office removal hasn't finished;
-    # installing now would download ~3 GB only to fail with 1603. Stop early.
-    if (Test-RebootRequiredHard) {
-        Bad "$product install blocked: a reboot is pending (a previous Office removal needs it)."
-        Write-Host "    REBOOT, then re-run the one-liner - it will install $product directly." -ForegroundColor Yellow
-        Send-Diag 'odt' 'reboot-required-before-install' $product
+    # An Office-blocking pending reboot (CBS/WU, or an Office file-rename) fails the
+    # C2R 'SXSMSI' prereq with 1603. Stop before the ~3 GB download and tell the user
+    # to do a REAL restart (a Fast-Startup "Shut down" does NOT clear it).
+    if (Test-OfficeRebootPending) {
+        Bad "$product install blocked: a pending reboot must clear first."
+        Show-RestartHint
+        Send-Diag 'odt' 'reboot-required-before-install' (Get-OfficeState)
         return $false
     }
+    # Office C2R installs via Windows Installer; a Disabled msiserver is a common
+    # SXSMSI prereq failure (1603). Make sure it can start.
+    try {
+        $msi = Get-Service msiserver -ErrorAction Stop
+        if ($msi.StartType -eq 'Disabled') { Set-Service msiserver -StartupType Manual -ErrorAction SilentlyContinue; Warn "Windows Installer service was Disabled - re-enabled it (required to install Office)." }
+    } catch {}
     if (-not $channel) { $channel = if ($product -match '2021') { 'PerpetualVL2021' } elseif ($product -match '2019') { 'PerpetualVL2019' } else { 'PerpetualVL2024' } }
     $xml = @"
 <Configuration>
