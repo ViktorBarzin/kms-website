@@ -63,6 +63,19 @@ function Choice([string]$key, [string]$prompt, [bool]$default) {
     return Ask $prompt $default
 }
 
+# Show the consequences of a destructive/heavy action and get consent (default No).
+# Interactive -> prompt. Non-interactive (KMS_AUTO set or no console) -> proceed
+# ONLY if an explicit env override gave consent ($envConsent), else skip.
+function Approve([string]$consequences, [bool]$envConsent) {
+    Write-Host ""
+    Write-Host $consequences -ForegroundColor Yellow
+    $interactive = ($auto.Count -eq 0) -and [Environment]::UserInteractive
+    if ($interactive) { return (Ask "Proceed?" $false) }
+    if ($envConsent)  { Write-Host "    (non-interactive; proceeding on explicit env override)"; return $true }
+    Warn "Skipped (non-interactive and no explicit env override to consent)."
+    return $false
+}
+
 Step "What would you like to do?"
 $doWin       = Choice 'win'             "Activate this Windows installation against KMS?" $true
 $doOfficeAct = Choice 'office'          "Activate an already-installed Office (Pro Plus 2024 / 2021 / 2019 / 2016)?" $false
@@ -112,6 +125,35 @@ function Resolve-WindowsGvlk {
     return $null
 }
 
+# The current edition can't KMS-activate (Home/retail). Offer an in-place edition
+# UPGRADE to a Volume License edition (default Pro; $env:KMS_EDITION overrides).
+function Upgrade-WindowsEdition {
+    $cv  = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -ErrorAction SilentlyContinue
+    $cur = if ($cv) { $cv.EditionID } else { 'this edition' }
+    $keys = Get-Keys; if (-not $keys) { Bad "No key list available - cannot pick a target edition."; return }
+    $targetName = if ($env:KMS_EDITION) { $env:KMS_EDITION } else { 'Pro' }
+    $t = $keys.windows | Where-Object { $_.edition -eq $targetName -or $_.editionid -eq $targetName } | Select-Object -First 1
+    if (-not $t) { Bad "Target edition '$targetName' is not in the published list. Set `$env:KMS_EDITION to a listed edition (Pro, Enterprise, Education, ...)."; return }
+    $text = @"
+This Windows edition ($cur) cannot be activated by KMS.
+It can be UPGRADED in place to a Volume License edition:
+
+    $cur  ->  $($t.edition)   (GVLK $($t.gvlk))
+
+Consequences:
+  * Runs  changepk.exe /ProductKey <GVLK>  - an in-place edition UPGRADE
+  * REQUIRES A REBOOT to complete; after reboot, re-run this one-liner to activate
+  * One-way: you cannot downgrade back to $cur without a full reinstall
+  * Only works along Microsoft's supported upgrade paths (e.g. Home -> Pro -> Enterprise)
+"@
+    if (-not (Approve $text ([bool]$env:KMS_EDITION))) { Warn "Edition upgrade skipped; $cur cannot KMS-activate as-is."; return }
+    $changepk = "$env:WINDIR\System32\changepk.exe"
+    if (-not (Test-Path $changepk)) { Bad "changepk.exe not found on this OS - cannot upgrade edition automatically."; return }
+    Step "Upgrading $cur -> $($t.edition) (changepk.exe /ProductKey ...)"
+    & $changepk /ProductKey $($t.gvlk)
+    OK "Edition upgrade started. REBOOT, then re-run this one-liner to activate $($t.edition)."
+}
+
 function Activate-Windows {
     Step "Windows activation"
     $slmgr = "$env:WINDIR\System32\slmgr.vbs"
@@ -122,7 +164,7 @@ function Activate-Windows {
     if ($null -eq $lic) {
         Step "No Volume License key - fetching the GVLK for this edition"
         $gvlk = Resolve-WindowsGvlk
-        if (-not $gvlk) { Bad "Couldn't auto-select a GVLK. Pick one from https://kms.viktorbarzin.me/#windows and run: slmgr /ipk <GVLK>"; return }
+        if (-not $gvlk) { Upgrade-WindowsEdition; return }
         Write-Host "    installing GVLK $gvlk"
         & cscript //Nologo $slmgr /ipk $gvlk | Out-Host
         if ($LASTEXITCODE -ne 0) { Bad "slmgr /ipk failed"; return }
@@ -159,6 +201,36 @@ function Get-OfficeReleaseIds {
     return @()
 }
 
+# Reinstall Office as a Volume License product via the Office Deployment Tool.
+# Heavy (multi-GB download, closes Office). Only invoked after explicit consent.
+$script:ODT_URL = 'https://download.microsoft.com/download/2/7/A/27AF1BE6-DD20-4CB4-B154-EBAB8A7D4A7E/officedeploymenttool_19127-20198.exe'
+function Reinstall-OfficeVL([string]$product) {
+    $tmp = Join-Path $env:TEMP "kms-odt-$(Get-Random)"
+    New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+    $odt = Join-Path $tmp 'odt.exe'
+    Step "Downloading the Office Deployment Tool"
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    try { Invoke-WebRequest -UseBasicParsing -Uri $script:ODT_URL -OutFile $odt } catch { Bad "ODT download failed: $($_.Exception.Message)"; return $false }
+    Start-Process -FilePath $odt -ArgumentList "/extract:`"$tmp`"", '/quiet' -Wait
+    $setup = Join-Path $tmp 'setup.exe'
+    if (-not (Test-Path $setup)) { Bad "ODT extraction failed (no setup.exe)."; return $false }
+    $channel = if ($product -match '2021') { 'PerpetualVL2021' } elseif ($product -match '2019') { 'PerpetualVL2019' } else { 'PerpetualVL2024' }
+    $cfg = Join-Path $tmp 'config.xml'
+    @"
+<Configuration>
+  <Add OfficeClientEdition="64" Channel="$channel">
+    <Product ID="$product"><Language ID="MatchOS" /></Product>
+  </Add>
+  <Display Level="None" AcceptEULA="TRUE" />
+  <Property Name="FORCEAPPSHUTDOWN" Value="TRUE" />
+</Configuration>
+"@ | Set-Content -Path $cfg -Encoding UTF8
+    Step "Running setup.exe /configure (multi-GB download + reinstall; several minutes)"
+    Start-Process -FilePath $setup -ArgumentList '/configure', "`"$cfg`"" -Wait
+    Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
+    return $true
+}
+
 # Per-product license check. ospp /dstatus lists EVERY installed product, so a
 # blanket '---LICENSED---' match treats Office-licensed as Project-licensed too.
 # Walk the LICENSE NAME / STATUS blocks and check only THIS family.
@@ -193,6 +265,30 @@ function Activate-Ospp([string]$label) {
         ($label -eq 'Project' -and $_ -match 'Project') -or
         ($label -eq 'Visio'   -and $_ -match 'Visio')   -or
         ($label -eq 'Office'  -and $_ -notmatch 'Project|Visio')
+    }
+    # No Volume License product of this family installed (e.g. retail Office).
+    # Offer a VL reinstall via the ODT (default product per family; override
+    # with $env:KMS_OFFICE_PRODUCT). Heavy + closes apps, so consent-gated.
+    if (-not $rels) {
+        $target = if ($env:KMS_OFFICE_PRODUCT) { $env:KMS_OFFICE_PRODUCT }
+        elseif ($label -eq 'Project') { 'ProjectPro2024Volume' }
+        elseif ($label -eq 'Visio') { 'VisioPro2024Volume' }
+        else { 'ProPlus2024Volume' }
+        $text = @"
+No Volume License $label is installed, so KMS cannot activate it.
+The Office Deployment Tool can reinstall it as Volume License:
+
+    ->  $target
+
+Consequences:
+  * Downloads ~3 GB and runs setup.exe /configure
+  * CLOSES all running Office apps (Word/Excel/Outlook/...)
+  * Several minutes; replaces the current $label install
+"@
+        if (-not (Approve $text ([bool]$env:KMS_OFFICE_PRODUCT))) { Warn "$label reinstall skipped; no VL $label to activate."; return }
+        if (-not (Reinstall-OfficeVL $target)) { return }
+        $ospp = Find-Ospp; if (-not $ospp) { Bad "ospp.vbs not found after reinstall."; return }
+        $rels = @($target)
     }
     $keys = Get-Keys
     foreach ($rel in $rels) {

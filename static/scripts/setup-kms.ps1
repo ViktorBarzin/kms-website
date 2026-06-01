@@ -91,8 +91,10 @@ if ($null -eq $lic) {
     Step "No Volume License key installed - detecting edition and fetching its GVLK"
     $gvlk = Resolve-WindowsGvlk
     if (-not $gvlk) {
-        Bad "Could not auto-select a GVLK for this edition."
-        Write-Host "    Pick one from https://kms.viktorbarzin.me/#windows and run:  slmgr /ipk <GVLK>"
+        Bad "This edition has no KMS GVLK - Home/retail can't KMS-activate as-is."
+        Write-Host "    To UPGRADE it in place to a Volume License edition (e.g. Home -> Pro) and"
+        Write-Host "    activate, run the interactive bootstrap (it shows the consequences first):"
+        Write-Host "      iwr -UseBasicParsing https://kms.viktorbarzin.me/scripts/kms-bootstrap.ps1 | iex"
         return
     }
     Step "Installing GVLK $gvlk"
