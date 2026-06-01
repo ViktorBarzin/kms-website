@@ -1,0 +1,2 @@
+{{- /* Machine-readable GVLK list for the activation scripts. Served at /keys.json. */ -}}
+{{- dict "windows" .Site.Data.products.windows "windows_server" .Site.Data.products.windows_server "office" .Site.Data.products.office | jsonify (dict "indent" "  ") -}}

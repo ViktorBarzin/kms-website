@@ -14,6 +14,18 @@ disableKinds = ["taxonomy", "term", "RSS", "sitemap", "404"]
   kmsPort      = 1688
   bootstrapURL = "/scripts/kms-bootstrap.ps1"
   setupURL     = "/scripts/setup-kms.ps1"
+  keysURL      = "/keys.json"
+
+# Publish data/products.yaml as machine-readable JSON at /keys.json so the
+# activation scripts can fetch the GVLKs (single source of truth, no hardcoding).
+# /keys.json is carved out of Anubis alongside /scripts (see stacks/kms).
+[outputs]
+  home = ["HTML", "KEYS"]
+
+[outputFormats.KEYS]
+  mediaType   = "application/json"
+  baseName    = "keys"
+  isPlainText = true
 
 [markup]
   [markup.goldmark.renderer]

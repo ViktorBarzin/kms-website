@@ -2,93 +2,123 @@ windows:
   # Windows 11 / Windows 10 — desktop SKUs (modern)
   - family: "Windows 11 / 10"
     edition: "Pro"
+    editionid: "Professional"
     gvlk: "W269N-WFGWX-YVC9B-4J6C9-T83GX"
     notes: "Same GVLK for Win11 and Win10 Pro."
     current: true
   - family: "Windows 11 / 10"
     edition: "Pro N"
+    editionid: "ProfessionalN"
     gvlk: "MH37W-N47XK-V7XM9-C7227-GCQG9"
     notes: "EU 'N' edition (no media pack)."
     current: true
   - family: "Windows 11 / 10"
     edition: "Pro for Workstations"
+    editionid: "ProfessionalWorkstation"
     gvlk: "NRG8B-VKK3Q-CXVCJ-9G2XF-6Q84J"
     current: true
   - family: "Windows 11 / 10"
     edition: "Pro for Workstations N"
+    editionid: "ProfessionalWorkstationN"
     gvlk: "9FNHH-K3HBT-3W4TD-6383H-6XYWF"
     current: true
   - family: "Windows 11 / 10"
     edition: "Pro Education"
+    editionid: "ProfessionalEducation"
     gvlk: "6TP4R-GNPTD-KYYHQ-7B7DP-J447Y"
     current: true
   - family: "Windows 11 / 10"
     edition: "Pro Education N"
+    editionid: "ProfessionalEducationN"
     gvlk: "YVWGF-BXNMC-HTQYQ-CPQ99-66QFC"
     current: true
   - family: "Windows 11 / 10"
     edition: "Education"
+    editionid: "Education"
     gvlk: "NW6C2-QMPVW-D7KKK-3GKT6-VCFB2"
     current: true
   - family: "Windows 11 / 10"
     edition: "Education N"
+    editionid: "EducationN"
     gvlk: "2WH4N-8QGBV-H22JP-CT43Q-MDWWJ"
     current: true
   - family: "Windows 11 / 10"
     edition: "Enterprise"
+    editionid: "Enterprise"
     gvlk: "NPPR9-FWDCX-D2C8J-H872K-2YT43"
     current: true
   - family: "Windows 11 / 10"
     edition: "Enterprise N"
+    editionid: "EnterpriseN"
     gvlk: "DPH2V-TTNVB-4X9Q3-TJR4H-KHJW4"
     current: true
   - family: "Windows 11 / 10"
     edition: "Enterprise G"
+    editionid: "EnterpriseG"
     gvlk: "YYVX9-NTFWV-6MDM3-9PT4T-4M68B"
     notes: "German government SKU."
     current: true
   - family: "Windows 11 / 10"
     edition: "Enterprise G N"
+    editionid: "EnterpriseGN"
     gvlk: "44RPN-FTY23-9VTTB-MP9BX-T84FV"
     current: true
 
   # LTSC editions
   - family: "Windows LTSC"
     edition: "Enterprise LTSC 2024 / 2021 / 2019"
+    editionid: "EnterpriseS"
+    builds: ["26100", "19044", "17763"]
     gvlk: "M7XTQ-FN8P6-TTKYV-9D4CC-J462D"
     notes: "Single GVLK across Win11 LTSC 2024 and Win10 LTSC 2021/2019."
     current: true
   - family: "Windows LTSC"
     edition: "Enterprise N LTSC 2024 / 2021 / 2019"
+    editionid: "EnterpriseSN"
+    builds: ["26100", "19044", "17763"]
     gvlk: "92NFX-8DJQP-P6BBQ-THF9C-7CG2H"
     current: true
   - family: "Windows LTSC"
     edition: "IoT Enterprise LTSC 2024 / 2021"
+    editionid: "IoTEnterpriseS"
+    builds: ["26100", "19044"]
     gvlk: "KBN8V-HFGQ4-MGXVD-347P6-PDQGT"
     notes: "Same GVLK for x64 and ARM64 IoT."
     current: true
   - family: "Windows LTSC"
     edition: "Enterprise LTSB 2016"
+    editionid: "EnterpriseS"
+    builds: ["14393"]
     gvlk: "DCPHK-NFMTC-H88MJ-PFHPY-QJ4BJ"
     notes: "Out of mainstream support; security updates ended Oct 2026."
   - family: "Windows LTSC"
     edition: "Enterprise N LTSB 2016"
+    editionid: "EnterpriseSN"
+    builds: ["14393"]
     gvlk: "QFFDN-GRT3P-VKWWX-X7T3R-8B639"
   - family: "Windows LTSC"
     edition: "Enterprise LTSB 2015"
+    editionid: "EnterpriseS"
+    builds: ["10240"]
     gvlk: "WNMTR-4C88C-JK8YV-HQ7T2-76DF9"
     notes: "End of support reached."
   - family: "Windows LTSC"
     edition: "Enterprise N LTSB 2015"
+    editionid: "EnterpriseSN"
+    builds: ["10240"]
     gvlk: "2F77B-TNFGY-69QQF-B8YKP-D69TJ"
 
 windows_server:
   - family: "Windows Server 2025"
     edition: "Standard"
+    editionid: "ServerStandard"
+    builds: ["26100"]
     gvlk: "TVRH6-WHNXV-R9WG3-9XRFY-MY832"
     current: true
   - family: "Windows Server 2025"
     edition: "Datacenter"
+    editionid: "ServerDatacenter"
+    builds: ["26100"]
     gvlk: "D764K-2NDRG-47T6Q-P8T8W-YP6DF"
     current: true
   - family: "Windows Server 2025"
@@ -98,10 +128,14 @@ windows_server:
     current: true
   - family: "Windows Server 2022"
     edition: "Standard"
+    editionid: "ServerStandard"
+    builds: ["20348"]
     gvlk: "VDYBN-27WPP-V4HQT-9VMD4-VMK7H"
     current: true
   - family: "Windows Server 2022"
     edition: "Datacenter"
+    editionid: "ServerDatacenter"
+    builds: ["20348"]
     gvlk: "WX4NM-KYWYW-QJJR4-XV3QB-6VM33"
     current: true
   - family: "Windows Server 2022"
@@ -111,25 +145,37 @@ windows_server:
     current: true
   - family: "Windows Server 2019"
     edition: "Standard"
+    editionid: "ServerStandard"
+    builds: ["17763"]
     gvlk: "N69G4-B89J2-4G8F4-WWYCC-J464C"
     current: true
   - family: "Windows Server 2019"
     edition: "Datacenter"
+    editionid: "ServerDatacenter"
+    builds: ["17763"]
     gvlk: "WMDGN-G9PQG-XVVXX-R3X43-63DFG"
     current: true
   - family: "Windows Server 2019"
     edition: "Essentials"
+    editionid: "ServerSolution"
+    builds: ["17763"]
     gvlk: "WVDHN-86M7X-466P6-VHXV7-YY726"
     current: true
   - family: "Windows Server 2016"
     edition: "Standard"
+    editionid: "ServerStandard"
+    builds: ["14393"]
     gvlk: "WC2BQ-8NRM3-FDDYY-2BFGV-KHKQY"
     notes: "EOL Jan 2027."
   - family: "Windows Server 2016"
     edition: "Datacenter"
+    editionid: "ServerDatacenter"
+    builds: ["14393"]
     gvlk: "CB7KF-BWN84-R7R2Y-793K2-8XDDG"
   - family: "Windows Server 2016"
     edition: "Essentials"
+    editionid: "ServerSolution"
+    builds: ["14393"]
     gvlk: "JCKRF-N37P4-C2D82-9YXRT-4M63B"
 office:
   # Office LTSC 2024 — current
