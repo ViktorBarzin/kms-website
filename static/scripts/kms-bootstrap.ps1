@@ -159,6 +159,21 @@ function Get-OfficeReleaseIds {
     return @()
 }
 
+# Per-product license check. ospp /dstatus lists EVERY installed product, so a
+# blanket '---LICENSED---' match treats Office-licensed as Project-licensed too.
+# Walk the LICENSE NAME / STATUS blocks and check only THIS family.
+function Test-OsppLicensed($ospp, $label) {
+    $name = ''
+    foreach ($l in ((& cscript //Nologo $ospp /dstatus 2>&1) -split "`r?`n")) {
+        if ($l -match 'LICENSE NAME:\s*(.+)') { $name = $matches[1] }
+        elseif ($l -match '---LICENSED---') {
+            $isProj = $name -match 'Project'; $isVis = $name -match 'Visio'
+            if ( ($label -eq 'Project' -and $isProj) -or ($label -eq 'Visio' -and $isVis) -or ($label -eq 'Office' -and -not $isProj -and -not $isVis) ) { return $true }
+        }
+    }
+    return $false
+}
+
 function Activate-Ospp([string]$label) {
     $ospp = Find-Ospp
     if (-not $ospp) {
@@ -168,10 +183,8 @@ function Activate-Ospp([string]$label) {
     Step "$label activation via $ospp"
     & cscript //Nologo $ospp /sethst:$KmsHost | Out-Host
     & cscript //Nologo $ospp /setprt:$KmsPort | Out-Host
-    # Idempotent: skip /act when already licensed (the '---LICENSED---' marker
-    # in ospp output is a fixed literal, not localized).
-    $st = & cscript //Nologo $ospp /dstatus 2>&1 | Out-String
-    if ($st -match '---LICENSED---') { OK "$label already licensed - host set, skipping /act"; return }
+    # Idempotent: skip /act when THIS family is already licensed.
+    if (Test-OsppLicensed $ospp $label) { OK "$label already licensed - host set, skipping /act"; return }
     # Not licensed: install the matching GVLK for each installed VL product of
     # this family (Office = anything that isn't Project/Visio), fetched from the list.
     # Match this family's installed VL products. NB: avoid `switch ($label)` here:
@@ -187,8 +200,7 @@ function Activate-Ospp([string]$label) {
         if ($k) { Write-Host "    $rel -> installing GVLK $k"; & cscript //Nologo $ospp /inpkey:$k | Out-Host }
     }
     & cscript //Nologo $ospp /act | Out-Host
-    $st = & cscript //Nologo $ospp /dstatus 2>&1 | Out-String
-    if ($st -match '---LICENSED---') { OK "$label licensed" } else { Warn "$label status not LICENSED yet (no VL $label SKU installed? See https://kms.viktorbarzin.me/#office)" }
+    if (Test-OsppLicensed $ospp $label) { OK "$label licensed" } else { Warn "$label status not LICENSED yet (no VL $label SKU installed? See https://kms.viktorbarzin.me/#office)" }
 }
 if ($doOfficeAct) { Activate-Ospp 'Office'  }
 if ($doProjAct)   { Activate-Ospp 'Project' }
