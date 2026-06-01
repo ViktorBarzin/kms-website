@@ -64,15 +64,18 @@ function Choice([string]$key, [string]$prompt, [bool]$default) {
 }
 
 # Show the consequences of a destructive/heavy action and get consent (default No).
-# Interactive -> prompt. Non-interactive (KMS_AUTO set or no console) -> proceed
-# ONLY if an explicit env override gave consent ($envConsent), else skip.
+# Gate ONLY on whether there's a real console. NB: $env:KMS_AUTO just pre-selects
+# WHICH products to activate (so the activate-windows/office one-liners can set it)
+# -- it must NOT suppress this prompt. With a console -> prompt; headless -> proceed
+# only if an explicit env override gave consent, else skip.
 function Approve([string]$consequences, [bool]$envConsent) {
     Write-Host ""
     Write-Host $consequences -ForegroundColor Yellow
-    $interactive = ($auto.Count -eq 0) -and [Environment]::UserInteractive
-    if ($interactive) { return (Ask "Proceed?" $false) }
-    if ($envConsent)  { Write-Host "    (non-interactive; proceeding on explicit env override)"; return $true }
-    Warn "Skipped (non-interactive and no explicit env override to consent)."
+    $canPrompt = $false
+    try { $canPrompt = [Environment]::UserInteractive -and -not [Console]::IsInputRedirected } catch { $canPrompt = $false }
+    if ($canPrompt) { return (Ask "Proceed?" $false) }
+    if ($envConsent) { Write-Host "    (non-interactive; proceeding on explicit env override)"; return $true }
+    Warn "Skipped: this needs confirmation. Re-run in an interactive PowerShell window, or set the override env var (e.g. `$env:KMS_OFFICE_PRODUCT or `$env:KMS_EDITION) to consent non-interactively."
     return $false
 }
 
