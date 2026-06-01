@@ -361,6 +361,7 @@ function Invoke-Odt([string]$configXml, [string]$stepMsg) {
         Step $stepMsg
         $p = Start-Process -FilePath $setup -ArgumentList '/configure', "`"$cfg`"" -Wait -PassThru
         $code = $p.ExitCode
+        $script:OdtExitCode = $code
         # 0 = success, 3010 = success/reboot-required. Anything else is a real ODT
         # failure - surface the log tail (carries the error code) so we can diagnose.
         if ($code -ne 0 -and $code -ne 3010) {
@@ -379,6 +380,42 @@ function Invoke-Odt([string]$configXml, [string]$stepMsg) {
         return $true
     }
     finally { Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue }
+}
+
+# Deep repair for a wedged Office-install prerequisite (the C2R 'SXSMSI' check
+# fails with 1603) when the common causes are clean AND DISM/SFC did not help.
+# Goes one level past DISM: re-registers the Windows Installer engine and resets
+# the servicing/update caches (SoftwareDistribution + catroot2) - which fixes
+# MSI-engine / signature-catalog corruption that DISM/SFC leave untouched. It
+# UNINSTALLS NOTHING. A restart is required afterwards. Consent-gated; set
+# $env:KMS_DEEP_REPAIR=1 to auto-consent.
+function Repair-OfficePrereq {
+    $msg = @"
+The Office installer's prerequisite check keeps failing (SXSMSI / error 1603) and
+the usual causes are clean (no pending reboot, Windows Installer healthy, disk OK,
+no policy block). A DEEP REPAIR can fix the Windows install subsystem - it does NOT
+uninstall anything:
+  * re-register the Windows Installer engine (msiexec /unregister + /regserver)
+  * reset the Windows servicing/update caches (SoftwareDistribution + catroot2)
+A RESTART is required afterwards, then re-run this one-liner to install Office.
+"@
+    if (-not (Approve $msg ([bool]$env:KMS_DEEP_REPAIR))) { Warn "Deep repair skipped."; return $false }
+    Send-Diag 'odt' 'deep-repair-start' (Get-OfficeState)
+    Step "Re-registering the Windows Installer engine"
+    Start-Process -FilePath 'msiexec.exe' -ArgumentList '/unregister' -Wait -ErrorAction SilentlyContinue
+    Start-Process -FilePath 'msiexec.exe' -ArgumentList '/regserver'  -Wait -ErrorAction SilentlyContinue
+    Step "Resetting servicing/update caches (SoftwareDistribution, catroot2)"
+    foreach ($s in 'wuauserv', 'cryptSvc', 'bits', 'msiserver') { Stop-Service $s -Force -ErrorAction SilentlyContinue }
+    $stamp = Get-Date -Format 'yyyyMMddHHmmss'
+    foreach ($p in @("$env:WINDIR\SoftwareDistribution", "$env:WINDIR\System32\catroot2")) {
+        if (Test-Path $p) { Rename-Item -LiteralPath $p -NewName "$(Split-Path $p -Leaf).old-$stamp" -ErrorAction SilentlyContinue }
+    }
+    foreach ($s in 'cryptSvc', 'bits', 'wuauserv') { Start-Service $s -ErrorAction SilentlyContinue }
+    OK "Deep repair complete."
+    Write-Host ""
+    Write-Host "==> NOW restart the PC (Start -> Power -> RESTART, not Shut down), then re-run the one-liner." -ForegroundColor Yellow
+    Send-Diag 'odt' 'deep-repair-done' (Get-OfficeState)
+    return $true
 }
 
 function Reinstall-OfficeVL([string]$product, [string]$channel) {
@@ -413,7 +450,12 @@ function Reinstall-OfficeVL([string]$product, [string]$channel) {
     # Snapshot the pre-install state so a failure is debuggable even if the user
     # aborts the ~3 GB download (the event ships before the install starts).
     Send-Diag 'odt' 'preinstall-state' (Get-OfficeState)
-    if (-not (Invoke-Odt $xml "Installing $product (multi-GB download + reinstall; several minutes)")) { return $false }
+    if (-not (Invoke-Odt $xml "Installing $product (multi-GB download + reinstall; several minutes)")) {
+        # SXSMSI/1603 with no pending reboot = the Windows install subsystem itself is
+        # wedged (survives DISM/SFC). Offer the deep repair, then reboot + re-run.
+        if ($script:OdtExitCode -eq 1603 -and -not (Test-OfficeRebootPending)) { Repair-OfficePrereq | Out-Null }
+        return $false
+    }
     # setup.exe returning is NOT proof Office is on disk - verify it actually landed.
     if (Wait-OfficeInstalled $product) { OK "$product installed"; return $true }
     $reboot = Test-PendingReboot
