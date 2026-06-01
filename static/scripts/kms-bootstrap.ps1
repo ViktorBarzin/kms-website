@@ -228,6 +228,16 @@ function Get-OfficeReleaseIds {
     return @()
 }
 
+# ALL installed Click-to-Run products (VL + Retail/M365), unfiltered. Retail/M365
+# IDs do NOT end in 'Volume' (e.g. O365ProPlusRetail, ProPlus2021Retail).
+function Get-AllOfficeC2R {
+    $c = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Office\ClickToRun\Configuration' -ErrorAction SilentlyContinue
+    if ($c -and $c.ProductReleaseIds) {
+        return $c.ProductReleaseIds.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ }
+    }
+    return @()
+}
+
 # Newest VL product for a family from the published list (data-driven: "latest"
 # tracks products.yaml, so adding a future LTSC there makes this follow with no
 # script change). Picks the highest year among ProPlus/ProjectPro/VisioPro VL SKUs.
@@ -238,25 +248,35 @@ function Get-LatestOfficeProduct([string]$label) {
         Sort-Object { [int]([regex]::Match($_.product, '\d+').Value) } -Descending | Select-Object -First 1
 }
 
-# Reinstall Office as a Volume License product via the Office Deployment Tool.
-# Heavy (multi-GB download, closes Office). Only invoked after explicit consent.
-# Self-hosted ODT bootstrapper (Microsoft's download.microsoft.com URL rotates
-# its build-numbered path every release and 404s; we serve a known-good copy
-# from our own /scripts). Override with $env:KMS_ODT_URL if ever needed.
+# Office Deployment Tool plumbing. Self-hosted ODT bootstrapper (Microsoft's
+# download.microsoft.com URL is build-numbered, rotates every release and 404s;
+# we serve a known-good copy from our own /scripts). $env:KMS_ODT_URL overrides.
+# Invoke-Odt runs ONE setup.exe /configure with the given <Configuration> XML and
+# is reused for both install (<Add>) and uninstall (<Remove>).
 $script:ODT_URL = $(if ($env:KMS_ODT_URL) { $env:KMS_ODT_URL } else { 'https://kms.viktorbarzin.me/scripts/odt-setup.exe' })
-function Reinstall-OfficeVL([string]$product, [string]$channel) {
+function Invoke-Odt([string]$configXml, [string]$stepMsg) {
     $tmp = Join-Path $env:TEMP "kms-odt-$(Get-Random)"
     New-Item -ItemType Directory -Force -Path $tmp | Out-Null
-    $odt = Join-Path $tmp 'odt.exe'
-    Step "Downloading the Office Deployment Tool"
-    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-    try { Invoke-WebRequest -UseBasicParsing -Uri $script:ODT_URL -OutFile $odt } catch { Bad "ODT download failed: $($_.Exception.Message)"; Send-Diag 'odt-install' 'fail' "download: $($_.Exception.Message)"; return $false }
-    Start-Process -FilePath $odt -ArgumentList "/extract:`"$tmp`"", '/quiet' -Wait
-    $setup = Join-Path $tmp 'setup.exe'
-    if (-not (Test-Path $setup)) { Bad "ODT extraction failed (no setup.exe)."; Send-Diag 'odt-install' 'fail' 'extract: no setup.exe'; return $false }
+    try {
+        $odt = Join-Path $tmp 'odt.exe'
+        Step "Downloading the Office Deployment Tool"
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        try { Invoke-WebRequest -UseBasicParsing -Uri $script:ODT_URL -OutFile $odt } catch { Bad "ODT download failed: $($_.Exception.Message)"; Send-Diag 'odt' 'fail' "download: $($_.Exception.Message)"; return $false }
+        Start-Process -FilePath $odt -ArgumentList "/extract:`"$tmp`"", '/quiet' -Wait
+        $setup = Join-Path $tmp 'setup.exe'
+        if (-not (Test-Path $setup)) { Bad "ODT extraction failed (no setup.exe)."; Send-Diag 'odt' 'fail' 'extract: no setup.exe'; return $false }
+        $cfg = Join-Path $tmp 'config.xml'
+        $configXml | Set-Content -Path $cfg -Encoding UTF8
+        Step $stepMsg
+        Start-Process -FilePath $setup -ArgumentList '/configure', "`"$cfg`"" -Wait
+        return $true
+    }
+    finally { Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue }
+}
+
+function Reinstall-OfficeVL([string]$product, [string]$channel) {
     if (-not $channel) { $channel = if ($product -match '2021') { 'PerpetualVL2021' } elseif ($product -match '2019') { 'PerpetualVL2019' } else { 'PerpetualVL2024' } }
-    $cfg = Join-Path $tmp 'config.xml'
-    @"
+    $xml = @"
 <Configuration>
   <Add OfficeClientEdition="64" Channel="$channel">
     <Product ID="$product"><Language ID="MatchOS" /></Product>
@@ -264,11 +284,25 @@ function Reinstall-OfficeVL([string]$product, [string]$channel) {
   <Display Level="None" AcceptEULA="TRUE" />
   <Property Name="FORCEAPPSHUTDOWN" Value="TRUE" />
 </Configuration>
-"@ | Set-Content -Path $cfg -Encoding UTF8
-    Step "Running setup.exe /configure (multi-GB download + reinstall; several minutes)"
-    Start-Process -FilePath $setup -ArgumentList '/configure', "`"$cfg`"" -Wait
-    Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
-    return $true
+"@
+    return (Invoke-Odt $xml "Installing $product (multi-GB download + reinstall; several minutes)")
+}
+
+# Uninstall specific Click-to-Run products (the incompatible retail/M365 Office
+# that blocks a VL install). Only the listed products are removed; VL products of
+# other families are preserved.
+function Uninstall-OfficeC2R([string[]]$products) {
+    $items = ($products | ForEach-Object { "    <Product ID=`"$_`" />" }) -join "`n"
+    $xml = @"
+<Configuration>
+  <Remove>
+$items
+  </Remove>
+  <Display Level="None" AcceptEULA="TRUE" />
+  <Property Name="FORCEAPPSHUTDOWN" Value="TRUE" />
+</Configuration>
+"@
+    return (Invoke-Odt $xml "Uninstalling incompatible Office: $($products -join ', ')")
 }
 
 # Offer to install the LATEST Volume License product for a family (or the
@@ -279,18 +313,26 @@ function Install-LatestOfficeVL([string]$label) {
     if (-not $target) { $best = Get-LatestOfficeProduct $label; if ($best) { $target = $best.product; $channel = $best.channel } }
     if (-not $target) { Warn "Couldn't determine the latest VL $label product from the key list."; return $null }
     $disp = if ($best) { "$($best.edition) ($target)" } else { $target }
+    # Retail/M365 Click-to-Run Office (IDs not ending in 'Volume') can't coexist
+    # with a VL install of the same suite and must be removed first.
+    $incompat = @(Get-AllOfficeC2R | Where-Object { $_ -notmatch 'Volume$' })
+    $rm = if ($incompat) { "`n  * FIRST UNINSTALLS the incompatible (non-VL) Office found: $($incompat -join ', ')" } else { '' }
     $text = @"
 KMS can only activate Volume License $label, and none is installed here.
 The Office Deployment Tool can install the LATEST Volume License edition:
 
     ->  $disp
 
-Consequences:
+Consequences:$rm
   * Downloads ~3 GB and runs setup.exe /configure
   * CLOSES all running Office apps (Word/Excel/Outlook/...)
   * Several minutes
 "@
     if (-not (Approve $text ([bool]$env:KMS_OFFICE_PRODUCT))) { Warn "$label install skipped."; Send-Diag $label.ToLower() 'install-skipped' $target; return $null }
+    if ($incompat) {
+        if (-not (Uninstall-OfficeC2R $incompat)) { Bad "Uninstall of incompatible Office failed; aborting before VL install."; Send-Diag $label.ToLower() 'uninstall-fail' ($incompat -join ','); return $null }
+        Send-Diag $label.ToLower() 'uninstalled-incompatible' ($incompat -join ',')
+    }
     if (-not (Reinstall-OfficeVL $target $channel)) { return $null }
     return $target
 }
