@@ -314,10 +314,22 @@ cscript ospp.vbs /dstatus               :: verify --LICENSED--</code></pre>
       <summary>Will my activation be logged? What about privacy?</summary>
       <p>The KMS protocol itself sends your machine's hostname, your client IP (from the TCP
       socket), and the product ID being activated. The server records the event in a log so
-      the operator can see overall traffic. No personal data beyond what the KMS protocol
-      itself transmits is collected; nothing is shared, sold, or retained beyond the operator's
-      monitoring. If that bothers you, run your own vlmcsd — it's a single binary, the source
-      is on <a href="https://github.com/Wind4/vlmcsd" target="_blank" rel="noopener">GitHub</a>.</p>
+      the operator can see overall traffic. The PowerShell scripts additionally send a small
+      <strong>anonymous</strong> diagnostics event (see next question) so the operator can spot
+      and fix script breakage. No personal data beyond what the KMS protocol itself transmits is
+      collected; nothing is shared, sold, or retained beyond the operator's monitoring. If that
+      bothers you, run your own vlmcsd — it's a single binary, the source is on
+      <a href="https://github.com/Wind4/vlmcsd" target="_blank" rel="noopener">GitHub</a>.</p>
+    </details>
+    <details>
+      <summary>Does the script send anything back to the server?</summary>
+      <p>Yes — a single <strong>anonymous, fire-and-forget</strong> diagnostics event per run, so the
+      operator can find and fix execution failures. It contains: the script name + version, what ran
+      (Windows / Office / edition-switch / install) and whether it succeeded, the error text on
+      failure, your Windows edition / build / locale, and detected Office products. It does
+      <strong>not</strong> send your hostname, username, or product keys. It can never block or break
+      activation (3-second timeout, errors swallowed). Opt out entirely by setting
+      <code>$env:KMS_NO_TELEMETRY=1</code> before running the one-liner.</p>
     </details>
     <details>
       <summary>Is this legal? Can I use it for anything?</summary>

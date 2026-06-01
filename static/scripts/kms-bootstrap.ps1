@@ -34,6 +34,29 @@ function OK($m)   { Write-Host "    OK: $m" -ForegroundColor Green }
 function Warn($m) { Write-Host "    !!  $m" -ForegroundColor Yellow }
 function Bad($m)  { Write-Host "    !!  $m" -ForegroundColor Red }
 
+# Anonymous, fire-and-forget diagnostics so script failures can be debugged
+# server-side (logged to Loki). No hostname / username / product keys. Opt out
+# with $env:KMS_NO_TELEMETRY=1; $env:KMS_DIAG_URL overrides. Version baked at build.
+$script:RunId = ([guid]::NewGuid().ToString('N')).Substring(0, 12)
+function Send-Diag([string]$action, [string]$outcome, [string]$detail = '') {
+    if ($env:KMS_NO_TELEMETRY) { return }
+    try {
+        $cv = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -ErrorAction SilentlyContinue
+        $pt = $null; try { $pt = (Get-CimInstance Win32_OperatingSystem -ErrorAction Stop).ProductType } catch {}
+        if ($detail.Length -gt 600) { $detail = $detail.Substring(0, 600) }
+        $body = @{
+            script = 'kms-bootstrap.ps1'; ver = '__KMS_VERSION__'; runid = $script:RunId
+            ts = (Get-Date).ToUniversalTime().ToString('o')
+            action = $action; outcome = $outcome; detail = $detail
+            edition = "$($cv.EditionID)"; build = "$($cv.CurrentBuildNumber)"; producttype = $pt
+            locale = (Get-Culture).Name
+        } | ConvertTo-Json -Compress
+        $url = if ($env:KMS_DIAG_URL) { $env:KMS_DIAG_URL } else { 'https://kms.viktorbarzin.me/diag' }
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        Invoke-WebRequest -UseBasicParsing -Method POST -Uri $url -Body $body -ContentType 'application/json' -TimeoutSec 3 | Out-Null
+    } catch {}
+}
+
 # --- Pre-flight ----------------------------------------------------------
 if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     Bad "Must run as Administrator. Right-click PowerShell -> 'Run as administrator', then re-run the one-liner."
@@ -149,11 +172,12 @@ Consequences:
   * One-way: you cannot downgrade back to $cur without a full reinstall
   * Only works along Microsoft's supported upgrade paths (e.g. Home -> Pro -> Enterprise)
 "@
-    if (-not (Approve $text ([bool]$env:KMS_EDITION))) { Warn "Edition upgrade skipped; $cur cannot KMS-activate as-is."; return }
+    if (-not (Approve $text ([bool]$env:KMS_EDITION))) { Warn "Edition upgrade skipped; $cur cannot KMS-activate as-is."; Send-Diag 'win-edition' 'skipped' $cur; return }
     $changepk = "$env:WINDIR\System32\changepk.exe"
-    if (-not (Test-Path $changepk)) { Bad "changepk.exe not found on this OS - cannot upgrade edition automatically."; return }
+    if (-not (Test-Path $changepk)) { Bad "changepk.exe not found on this OS - cannot upgrade edition automatically."; Send-Diag 'win-edition' 'fail' 'changepk missing'; return }
     Step "Upgrading $cur -> $($t.edition) (changepk.exe /ProductKey ...)"
     & $changepk /ProductKey $($t.gvlk)
+    Send-Diag 'win-edition' 'upgrade-started' "$cur -> $($t.edition)"
     OK "Edition upgrade started. REBOOT, then re-run this one-liner to activate $($t.edition)."
 }
 
@@ -161,21 +185,21 @@ function Activate-Windows {
     Step "Windows activation"
     $slmgr = "$env:WINDIR\System32\slmgr.vbs"
     & cscript //Nologo $slmgr /skms "$KmsHost`:$KmsPort" | Out-Host
-    if ($LASTEXITCODE -ne 0) { Bad "slmgr /skms failed"; return }
+    if ($LASTEXITCODE -ne 0) { Bad "slmgr /skms failed"; Send-Diag 'win' 'fail' 'skms failed'; return }
     $lic = Get-WindowsLicense
-    if ($lic -and $lic.Licensed) { OK "Windows already licensed ($($lic.DaysLeft) days) - host pinned, skipping /ato"; return }
+    if ($lic -and $lic.Licensed) { OK "Windows already licensed ($($lic.DaysLeft) days) - host pinned, skipping /ato"; Send-Diag 'win' 'already-licensed'; return }
     if ($null -eq $lic) {
         Step "No Volume License key - fetching the GVLK for this edition"
         $gvlk = Resolve-WindowsGvlk
         if (-not $gvlk) { Upgrade-WindowsEdition; return }
         Write-Host "    installing GVLK $gvlk"
         & cscript //Nologo $slmgr /ipk $gvlk | Out-Host
-        if ($LASTEXITCODE -ne 0) { Bad "slmgr /ipk failed"; return }
+        if ($LASTEXITCODE -ne 0) { Bad "slmgr /ipk failed"; Send-Diag 'win' 'fail' 'ipk failed'; return }
     }
     & cscript //Nologo $slmgr /ato | Out-Host
     $lic = Get-WindowsLicense
-    if ($lic -and $lic.Licensed) { OK "Windows licensed ($($lic.DaysLeft) days)" }
-    else { Bad "Windows not licensed - likely not a VL edition (Home/retail/OEM reject KMS). See https://kms.viktorbarzin.me/#faq" }
+    if ($lic -and $lic.Licensed) { OK "Windows licensed ($($lic.DaysLeft) days)"; Send-Diag 'win' 'ok' "$($lic.DaysLeft) days" }
+    else { Bad "Windows not licensed - likely not a VL edition (Home/retail/OEM reject KMS). See https://kms.viktorbarzin.me/#faq"; Send-Diag 'win' 'fail' 'ato did not stick (non-VL edition?)' }
 }
 if ($doWin) { Activate-Windows }
 
@@ -226,10 +250,10 @@ function Reinstall-OfficeVL([string]$product, [string]$channel) {
     $odt = Join-Path $tmp 'odt.exe'
     Step "Downloading the Office Deployment Tool"
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-    try { Invoke-WebRequest -UseBasicParsing -Uri $script:ODT_URL -OutFile $odt } catch { Bad "ODT download failed: $($_.Exception.Message)"; return $false }
+    try { Invoke-WebRequest -UseBasicParsing -Uri $script:ODT_URL -OutFile $odt } catch { Bad "ODT download failed: $($_.Exception.Message)"; Send-Diag 'odt-install' 'fail' "download: $($_.Exception.Message)"; return $false }
     Start-Process -FilePath $odt -ArgumentList "/extract:`"$tmp`"", '/quiet' -Wait
     $setup = Join-Path $tmp 'setup.exe'
-    if (-not (Test-Path $setup)) { Bad "ODT extraction failed (no setup.exe)."; return $false }
+    if (-not (Test-Path $setup)) { Bad "ODT extraction failed (no setup.exe)."; Send-Diag 'odt-install' 'fail' 'extract: no setup.exe'; return $false }
     if (-not $channel) { $channel = if ($product -match '2021') { 'PerpetualVL2021' } elseif ($product -match '2019') { 'PerpetualVL2019' } else { 'PerpetualVL2024' } }
     $cfg = Join-Path $tmp 'config.xml'
     @"
@@ -266,7 +290,7 @@ Consequences:
   * CLOSES all running Office apps (Word/Excel/Outlook/...)
   * Several minutes
 "@
-    if (-not (Approve $text ([bool]$env:KMS_OFFICE_PRODUCT))) { Warn "$label install skipped."; return $null }
+    if (-not (Approve $text ([bool]$env:KMS_OFFICE_PRODUCT))) { Warn "$label install skipped."; Send-Diag $label.ToLower() 'install-skipped' $target; return $null }
     if (-not (Reinstall-OfficeVL $target $channel)) { return $null }
     return $target
 }
@@ -299,7 +323,7 @@ function Activate-Ospp([string]$label) {
     & cscript //Nologo $ospp /sethst:$KmsHost | Out-Host
     & cscript //Nologo $ospp /setprt:$KmsPort | Out-Host
     # Idempotent: skip /act when THIS family is already licensed.
-    if (Test-OsppLicensed $ospp $label) { OK "$label already licensed - host set, skipping /act"; return }
+    if (Test-OsppLicensed $ospp $label) { OK "$label already licensed - host set, skipping /act"; Send-Diag $label.ToLower() 'already-licensed'; return }
     # Installed VL products of this family. NB: avoid `switch ($label)` here -
     # inside a switch, $_ is the switch input (the label), not the pipeline item.
     $rels = Get-OfficeReleaseIds | Where-Object {
@@ -320,7 +344,8 @@ function Activate-Ospp([string]$label) {
         if ($k) { Write-Host "    $rel -> installing GVLK $k"; & cscript //Nologo $ospp /inpkey:$k | Out-Host }
     }
     & cscript //Nologo $ospp /act | Out-Host
-    if (Test-OsppLicensed $ospp $label) { OK "$label licensed" } else { Warn "$label status not LICENSED yet (no VL $label SKU? See https://kms.viktorbarzin.me/#office)" }
+    if (Test-OsppLicensed $ospp $label) { OK "$label licensed"; Send-Diag $label.ToLower() 'ok' ($rels -join ',') }
+    else { Warn "$label status not LICENSED yet (no VL $label SKU? See https://kms.viktorbarzin.me/#office)"; Send-Diag $label.ToLower() 'fail' ("products=" + ($rels -join ',')) }
 }
 if ($doOfficeAct) { Activate-Ospp 'Office'  }
 if ($doProjAct)   { Activate-Ospp 'Project' }

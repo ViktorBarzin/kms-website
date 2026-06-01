@@ -29,6 +29,21 @@ function Step($m) { Write-Host "==> $m" -ForegroundColor Cyan }
 function OK($m)   { Write-Host "    OK: $m" -ForegroundColor Green }
 function Bad($m)  { Write-Host "    !!  $m" -ForegroundColor Red }
 
+# Anonymous, fire-and-forget diagnostics (see kms-bootstrap.ps1). No PII.
+# $env:KMS_NO_TELEMETRY=1 opts out; $env:KMS_DIAG_URL overrides. Version baked at build.
+$script:RunId = ([guid]::NewGuid().ToString('N')).Substring(0, 12)
+function Send-Diag([string]$action, [string]$outcome, [string]$detail = '') {
+    if ($env:KMS_NO_TELEMETRY) { return }
+    try {
+        $cv = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -ErrorAction SilentlyContinue
+        if ($detail.Length -gt 600) { $detail = $detail.Substring(0, 600) }
+        $body = @{ script = 'setup-kms.ps1'; ver = '__KMS_VERSION__'; runid = $script:RunId; ts = (Get-Date).ToUniversalTime().ToString('o'); action = $action; outcome = $outcome; detail = $detail; edition = "$($cv.EditionID)"; build = "$($cv.CurrentBuildNumber)"; locale = (Get-Culture).Name } | ConvertTo-Json -Compress
+        $url = if ($env:KMS_DIAG_URL) { $env:KMS_DIAG_URL } else { 'https://kms.viktorbarzin.me/diag' }
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        Invoke-WebRequest -UseBasicParsing -Method POST -Uri $url -Body $body -ContentType 'application/json' -TimeoutSec 3 | Out-Null
+    } catch {}
+}
+
 if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     Bad "Must run as Administrator. Right-click PowerShell -> 'Run as administrator', then retry."
     return
@@ -83,6 +98,7 @@ if ($lic -and $lic.Licensed) {
     Write-Host ""
     Write-Host "==> Already licensed ($($lic.DaysLeft) days remaining). Nothing to do." -ForegroundColor Green
     Write-Host "    Host is pinned to $KmsHost; Windows auto-renews every 7 days."
+    Send-Diag 'win' 'already-licensed'
     return
 }
 
@@ -95,11 +111,12 @@ if ($null -eq $lic) {
         Write-Host "    To UPGRADE it in place to a Volume License edition (e.g. Home -> Pro) and"
         Write-Host "    activate, run the interactive bootstrap (it shows the consequences first):"
         Write-Host "      iwr -UseBasicParsing https://kms.viktorbarzin.me/scripts/kms-bootstrap.ps1 | iex"
+        Send-Diag 'win' 'no-vl-edition' 'Home/retail - directed to bootstrap'
         return
     }
     Step "Installing GVLK $gvlk"
     $out = & cscript //Nologo $slmgr /ipk $gvlk 2>&1
-    if ($LASTEXITCODE -ne 0) { Bad "slmgr /ipk failed (exit $LASTEXITCODE): $out"; return }
+    if ($LASTEXITCODE -ne 0) { Bad "slmgr /ipk failed (exit $LASTEXITCODE): $out"; Send-Diag 'win' 'fail' 'ipk failed'; return }
     OK "GVLK installed"
 }
 
@@ -112,9 +129,11 @@ if ($lic.Licensed) {
     Write-Host ""
     Write-Host "==> SUCCESS: Windows is now licensed via KMS ($($lic.DaysLeft) days)." -ForegroundColor Green
     Write-Host "    Renews automatically every 7 days; lasts 180 days per renewal."
+    Send-Diag 'win' 'ok' "$($lic.DaysLeft) days"
 } else {
     Write-Host ""
     Write-Host "==> Activation did not stick." -ForegroundColor Yellow
     Write-Host "    Most common cause: this Windows is not a Volume License edition"
     Write-Host "    (Home / retail / OEM reject KMS). See https://kms.viktorbarzin.me/#faq"
+    Send-Diag 'win' 'fail' 'ato did not stick (non-VL edition?)'
 }

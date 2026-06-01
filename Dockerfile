@@ -3,9 +3,11 @@ ARG HUGO_VERSION=0.139.0
 ARG NGINX_VERSION=1.27-alpine
 
 FROM hugomods/hugo:${HUGO_VERSION} AS build
+ARG SCRIPT_VERSION=dev
 WORKDIR /src
 COPY . .
-RUN hugo --minify --gc --destination /out
+RUN hugo --minify --gc --destination /out && \
+    sed -i "s/__KMS_VERSION__/${SCRIPT_VERSION}/g" /out/scripts/*.ps1
 
 FROM nginx:${NGINX_VERSION}
 LABEL org.opencontainers.image.source="https://forgejo.viktorbarzin.me/viktor/kms-website" \
