@@ -15,7 +15,7 @@
 
 [CmdletBinding()]
 param(
-    [string]$KmsHost = $(if ($env:KMS_HOST) { $env:KMS_HOST } else { 'kms.viktorbarzin.me' }),
+    [string]$KmsHost = $(if ($env:KMS_HOST) { $env:KMS_HOST } else { 'vlmcs.viktorbarzin.me' }),
     [int]   $KmsPort = $(if ($env:KMS_PORT) { [int]$env:KMS_PORT } else { 1688 })
 )
 

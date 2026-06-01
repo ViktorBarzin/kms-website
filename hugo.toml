@@ -5,8 +5,12 @@ disableKinds = ["taxonomy", "term", "RSS", "sitemap", "404"]
 
 [params]
   description  = "Public KMS host for activating Microsoft Volume License Windows, Office, Project, and Visio. Free, no signup, no tracking."
-  kmsHost      = "kms.viktorbarzin.me"
-  kmsHostLan   = "kms.viktorbarzin.lan"
+  # siteHost serves this website + the /scripts/*.ps1 downloads (Traefik).
+  # kmsHost is the raw KMS endpoint on :1688 (vlmcsd) — a SEPARATE A-only host
+  # so it resolves to the KMS server both on the LAN and over the internet.
+  # They must stay distinct: kms.viktorbarzin.me:1688 hits Traefik (no KMS).
+  siteHost     = "kms.viktorbarzin.me"
+  kmsHost      = "vlmcs.viktorbarzin.me"
   kmsPort      = 1688
   bootstrapURL = "/scripts/kms-bootstrap.ps1"
   setupURL     = "/scripts/setup-kms.ps1"

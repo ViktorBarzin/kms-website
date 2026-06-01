@@ -70,15 +70,15 @@
   <div class="quickstart-grid">
     <div class="card terminal">
       <div class="card-head"><span>Windows only</span><button class="btn-copy" data-copy-target="quickstart-win">Copy</button></div>
-<pre id="quickstart-win"><code>$env:KMS_AUTO='win'; iwr -UseBasicParsing https://{{ .Site.Params.kmsHost }}{{ .Site.Params.bootstrapURL }} | iex</code></pre>
+<pre id="quickstart-win"><code>$env:KMS_AUTO='win'; iwr -UseBasicParsing https://{{ .Site.Params.siteHost }}{{ .Site.Params.bootstrapURL }} | iex</code></pre>
     </div>
     <div class="card terminal">
       <div class="card-head"><span>Office / Project / Visio</span><button class="btn-copy" data-copy-target="quickstart-office">Copy</button></div>
-<pre id="quickstart-office"><code>$env:KMS_AUTO='office,project,visio'; iwr -UseBasicParsing https://{{ .Site.Params.kmsHost }}{{ .Site.Params.bootstrapURL }} | iex</code></pre>
+<pre id="quickstart-office"><code>$env:KMS_AUTO='office,project,visio'; iwr -UseBasicParsing https://{{ .Site.Params.siteHost }}{{ .Site.Params.bootstrapURL }} | iex</code></pre>
     </div>
     <div class="card terminal">
       <div class="card-head"><span>Windows + Office</span><button class="btn-copy" data-copy-target="quickstart-both">Copy</button></div>
-<pre id="quickstart-both"><code>$env:KMS_AUTO='win,office,project,visio'; iwr -UseBasicParsing https://{{ .Site.Params.kmsHost }}{{ .Site.Params.bootstrapURL }} | iex</code></pre>
+<pre id="quickstart-both"><code>$env:KMS_AUTO='win,office,project,visio'; iwr -UseBasicParsing https://{{ .Site.Params.siteHost }}{{ .Site.Params.bootstrapURL }} | iex</code></pre>
     </div>
   </div>
   <p class="hint">
@@ -111,7 +111,7 @@ cscript "C:\Program Files\Microsoft Office\Office16\ospp.vbs" /act</code></pre>
     Click any key to copy.
   </p>
 
-  {{ $order := slice "Windows 11 / 10" "Windows LTSC" "Legacy desktop" }}
+  {{ $order := slice "Windows 11 / 10" "Windows LTSC" }}
   {{ range $family := $order }}
     {{ $items := where $windows "family" $family }}
     {{ if $items }}
@@ -131,6 +131,13 @@ cscript "C:\Program Files\Microsoft Office\Office16\ospp.vbs" /act</code></pre>
     {{ end }}
   {{ end }}
 
+  <p class="hint">
+    <strong>Legacy desktop</strong> (Windows 8.1 / 8 / 7 / Vista) is out of support and omitted.
+    Those GVLKs still work against this KMS — look them up in Microsoft's
+    <a href="https://learn.microsoft.com/en-us/windows-server/get-started/kms-client-activation-keys" target="_blank" rel="noopener">KMS client key list</a>
+    and activate with the same <code>slmgr</code> steps below.
+  </p>
+
   <details class="card">
     <summary>How to use a GVLK on Windows</summary>
 <pre><code>:: open cmd.exe as Administrator
@@ -146,7 +153,7 @@ slmgr /dlv                                       :: verify (look for &quot;LICEN
   <h2>Windows Server</h2>
   <p class="muted">Server SKUs need only 5 unique clients to satisfy the KMS activation count threshold (vs. 25 for desktop).</p>
 
-  {{ $serverOrder := slice "Windows Server 2025" "Windows Server 2022" "Windows Server 2019" "Windows Server 2016" "Windows Server 2012 R2" "Windows Server 2012" "Windows Server 2008 R2" "Windows Server 2008" }}
+  {{ $serverOrder := slice "Windows Server 2025" "Windows Server 2022" "Windows Server 2019" "Windows Server 2016" }}
   {{ range $family := $serverOrder }}
     {{ $items := where $servers "family" $family }}
     {{ if $items }}
@@ -165,6 +172,11 @@ slmgr /dlv                                       :: verify (look for &quot;LICEN
   </table>
     {{ end }}
   {{ end }}
+  <p class="hint">
+    <strong>Server 2012 R2 / 2012 / 2008 R2 / 2008</strong> are end-of-life and omitted.
+    Their GVLKs still activate here — see Microsoft's
+    <a href="https://learn.microsoft.com/en-us/windows-server/get-started/kms-client-activation-keys" target="_blank" rel="noopener">KMS client key list</a>.
+  </p>
 </section>
 
 <section id="office">

@@ -1,18 +1,15 @@
 # kms-bootstrap.ps1
 #
-# Interactive activator for a public KMS host (default: kms.viktorbarzin.me:1688).
-# Asks what you want to activate (Windows / already-installed Office / Project /
-# Visio), and optionally what you want to *install* (Office LTSC 2024 ProPlus,
-# Project Pro 2024, Visio Pro 2024 — all VL editions installed via the official
-# Microsoft Office Deployment Tool). Runs only what you confirm.
+# Interactive KMS activator. Asks what you want to activate (Windows /
+# already-installed Office / Project / Visio) and runs only what you confirm.
+# Points each product at the public KMS host (default: vlmcs.viktorbarzin.me:1688).
 #
 # Usage:
 #   iwr -UseBasicParsing https://kms.viktorbarzin.me/scripts/kms-bootstrap.ps1 | iex
 #
 # Non-interactive (CI / automation):
 #   $env:KMS_AUTO = 'win,office'; iwr ... | iex
-#       (comma list of: win, office, project, visio, install-office,
-#                       install-project, install-visio)
+#       (comma list of: win, office, project, visio)
 #
 # Custom KMS host:
 #   $env:KMS_HOST = 'kms.example.com'; iwr ... | iex
@@ -22,7 +19,7 @@
 
 [CmdletBinding()]
 param(
-    [string]$KmsHost = $(if ($env:KMS_HOST) { $env:KMS_HOST } else { 'kms.viktorbarzin.me' }),
+    [string]$KmsHost = $(if ($env:KMS_HOST) { $env:KMS_HOST } else { 'vlmcs.viktorbarzin.me' }),
     [int]   $KmsPort = $(if ($env:KMS_PORT) { [int]$env:KMS_PORT } else { 1688 })
 )
 
@@ -69,11 +66,7 @@ $doOfficeAct = Choice 'office'          "Activate an already-installed Office (P
 $doProjAct   = Choice 'project'         "Activate an already-installed Project (Pro 2024 / 2021 / 2019 / 2016)?" $false
 $doVisioAct  = Choice 'visio'           "Activate an already-installed Visio (Pro 2024 / 2021 / 2019 / 2016)?" $false
 
-$doInstOff   = Choice 'install-office'  "Install Office LTSC 2024 ProPlus (VL, ~3 GB) and activate?" $false
-$doInstProj  = Choice 'install-project' "Install Project Pro 2024 (VL) and activate?" $false
-$doInstVis   = Choice 'install-visio'   "Install Visio Pro 2024 (VL) and activate?" $false
-
-if (-not ($doWin -or $doOfficeAct -or $doProjAct -or $doVisioAct -or $doInstOff -or $doInstProj -or $doInstVis)) {
+if (-not ($doWin -or $doOfficeAct -or $doProjAct -or $doVisioAct)) {
     Warn "Nothing selected. Exiting."
     return
 }
@@ -123,62 +116,6 @@ function Activate-Ospp([string]$label) {
 if ($doOfficeAct) { Activate-Ospp 'Office'  }
 if ($doProjAct)   { Activate-Ospp 'Project' }
 if ($doVisioAct)  { Activate-Ospp 'Visio'   }
-
-# --- Install via ODT -----------------------------------------------------
-$ODT_URL = 'https://download.microsoft.com/download/2/7/A/27AF1BE6-DD20-4CB4-B154-EBAB8A7D4A7E/officedeploymenttool_19127-20198.exe'
-
-function Install-Odt-Bundle([string[]]$products) {
-    $tmp = Join-Path $env:TEMP "kms-odt-$(Get-Random)"
-    New-Item -ItemType Directory -Force -Path $tmp | Out-Null
-    $odtExe = Join-Path $tmp 'odt.exe'
-    Step "Downloading Office Deployment Tool to $tmp"
-    Invoke-WebRequest -UseBasicParsing -Uri $ODT_URL -OutFile $odtExe
-    Step "Extracting ODT"
-    Start-Process -FilePath $odtExe -ArgumentList "/extract:`"$tmp`"", '/quiet' -Wait
-    $setup = Join-Path $tmp 'setup.exe'
-    if (-not (Test-Path $setup)) { Bad "ODT extraction failed (no setup.exe in $tmp)"; return }
-
-    # Build Configuration.xml — only the requested VL Products.
-    $productXml = ($products | ForEach-Object { "<Product ID=`"$_`"><Language ID=`"en-us`" /></Product>" }) -join ''
-    $cfgXml = @"
-<Configuration>
-  <Add OfficeClientEdition="64" Channel="PerpetualVL2024">
-    $productXml
-  </Add>
-  <Updates Enabled="TRUE" Channel="PerpetualVL2024" />
-  <Display Level="None" AcceptEULA="TRUE" />
-  <Property Name="AUTOACTIVATE" Value="1" />
-  <Property Name="FORCEAPPSHUTDOWN" Value="TRUE" />
-</Configuration>
-"@
-    $cfg = Join-Path $tmp 'Configuration.xml'
-    Set-Content -Path $cfg -Value $cfgXml -Encoding UTF8
-
-    Step "Running setup.exe /configure (this can take 5-15 min depending on bandwidth)"
-    Start-Process -FilePath $setup -ArgumentList '/configure', "`"$cfg`"" -Wait
-    if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne $null) { Warn "ODT exit code $LASTEXITCODE" }
-
-    # Pin KMS host + activate
-    $ospp = Find-Ospp
-    if ($ospp) {
-        Step "Pinning Office at $KmsHost`:$KmsPort and activating"
-        & cscript //Nologo $ospp /sethst:$KmsHost | Out-Host
-        & cscript //Nologo $ospp /setprt:$KmsPort | Out-Host
-        & cscript //Nologo $ospp /act             | Out-Host
-        $st = & cscript //Nologo $ospp /dstatus 2>&1 | Out-String
-        if ($st -match '---LICENSED---') { OK "Office bundle licensed" } else { Warn "Status not LICENSED yet" }
-    } else {
-        Warn "ospp.vbs still not found post-install — manual /act needed."
-    }
-
-    Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
-}
-
-$installList = @()
-if ($doInstOff)  { $installList += 'ProPlus2024Volume'    }
-if ($doInstProj) { $installList += 'ProjectPro2024Volume' }
-if ($doInstVis)  { $installList += 'VisioPro2024Volume'   }
-if ($installList.Count -gt 0) { Install-Odt-Bundle $installList }
 
 Write-Host ""
 Step "Done."
