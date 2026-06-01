@@ -259,22 +259,37 @@ $script:ODT_URL   = $(if ($env:KMS_ODT_URL) { $env:KMS_ODT_URL } else { 'https:/
 # of a bare "ospp.vbs not found". Cleared at the start of every Invoke-Odt run.
 $script:OdtLogDir = Join-Path $env:TEMP 'kms-odt-logs'
 
-# Tail of the newest ODT log - the setup.exe error code lives here on failure.
-function Get-OdtLogTail([int]$lines = 20) {
-    $log = Get-ChildItem -Path $script:OdtLogDir -Filter *.log -ErrorAction SilentlyContinue |
-        Sort-Object LastWriteTime -Descending | Select-Object -First 1
-    if (-not $log) { return '' }
-    return ((Get-Content -LiteralPath $log.FullName -Tail $lines -ErrorAction SilentlyContinue) -join ' | ')
+# Tail of the most relevant ODT / Click-to-Run log. ODT's own log goes to
+# OdtLogDir, but the DETAILED failure behind a 1603 is written by the C2R client
+# to %TEMP%. Search both, newest first, and prefer error-bearing lines so the tail
+# actually explains the failure instead of being empty.
+function Get-OdtLogTail([int]$lines = 25) {
+    $logs = Get-ChildItem -Path @($script:OdtLogDir, $env:TEMP) -Filter *.log -ErrorAction SilentlyContinue |
+        Where-Object { $_.LastWriteTime -gt (Get-Date).AddMinutes(-30) } |
+        Sort-Object LastWriteTime -Descending | Select-Object -First 5
+    foreach ($log in $logs) {
+        $err = Get-Content -LiteralPath $log.FullName -ErrorAction SilentlyContinue |
+            Where-Object { $_ -match 'error|fail|1603|0x8|cannot|denied|reboot|in progress' } | Select-Object -Last $lines
+        if ($err) { return ($log.Name + ': ' + ($err -join ' | ')) }
+    }
+    if ($logs) { return ($logs[0].Name + ': ' + ((Get-Content -LiteralPath $logs[0].FullName -Tail $lines -ErrorAction SilentlyContinue) -join ' | ')) }
+    return ''
 }
 
-# "A reboot is pending" probe. C2R half-completes an install when a prior removal
-# left the servicing stack pending - the usual cause of an install run right after
-# uninstalling the bundled consumer Office.
+# "A reboot is pending" probe (all signals) - used for advisory messages/telemetry.
 function Test-PendingReboot {
     if (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending') { return $true }
     if (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired') { return $true }
     $sm = Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager' -Name PendingFileRenameOperations -ErrorAction SilentlyContinue
     return [bool]$sm.PendingFileRenameOperations
+}
+
+# STRONG reboot signals only (CBS / Windows Update) - reliably "a real reboot is
+# needed". Used to GATE an install (PendingFileRenameOperations is too noisy to
+# block on - it is set by lots of unrelated software).
+function Test-RebootRequiredHard {
+    (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending') -or
+    (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired')
 }
 
 # Poll until the C2R install actually lands. setup.exe /configure can return before
@@ -313,9 +328,15 @@ function Invoke-Odt([string]$configXml, [string]$stepMsg) {
         # failure - surface the log tail (carries the error code) so we can diagnose.
         if ($code -ne 0 -and $code -ne 3010) {
             $tail = Get-OdtLogTail
+            $reboot = Test-PendingReboot
             Bad "Office Deployment Tool failed (setup.exe exit $code)."
-            if ($tail) { Write-Host "    ODT log: $tail" }
-            Send-Diag 'odt' 'fail' "exit=$code; $tail"
+            # 1603 = fatal install error; right after removing the bundled consumer
+            # Office it almost always means the old install is still pending a reboot.
+            if ($reboot -or $code -eq 1603) {
+                Write-Host "    A reboot is needed to finish removing the previous Office. REBOOT, then re-run the one-liner - it installs the Volume License Office directly." -ForegroundColor Yellow
+            }
+            if ($tail) { Write-Host "    ODT/C2R log: $tail" }
+            Send-Diag 'odt' 'fail' "exit=$code; reboot=$reboot; $tail"
             return $false
         }
         if ($code -eq 3010) { Warn "ODT reports a reboot is required to finish." }
@@ -325,6 +346,14 @@ function Invoke-Odt([string]$configXml, [string]$stepMsg) {
 }
 
 function Reinstall-OfficeVL([string]$product, [string]$channel) {
+    # A hard pending-reboot (CBS/WU) means a prior Office removal hasn't finished;
+    # installing now would download ~3 GB only to fail with 1603. Stop early.
+    if (Test-RebootRequiredHard) {
+        Bad "$product install blocked: a reboot is pending (a previous Office removal needs it)."
+        Write-Host "    REBOOT, then re-run the one-liner - it will install $product directly." -ForegroundColor Yellow
+        Send-Diag 'odt' 'reboot-required-before-install' $product
+        return $false
+    }
     if (-not $channel) { $channel = if ($product -match '2021') { 'PerpetualVL2021' } elseif ($product -match '2019') { 'PerpetualVL2019' } else { 'PerpetualVL2024' } }
     $xml = @"
 <Configuration>
