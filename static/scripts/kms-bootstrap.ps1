@@ -43,7 +43,11 @@ function Send-Diag([string]$action, [string]$outcome, [string]$detail = '') {
     try {
         $cv = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -ErrorAction SilentlyContinue
         $pt = $null; try { $pt = (Get-CimInstance Win32_OperatingSystem -ErrorAction Stop).ProductType } catch {}
-        if ($detail.Length -gt 600) { $detail = $detail.Substring(0, 600) }
+        # Keep telemetry anonymous: scrub machine + user names that leak via log
+        # filenames / paths (e.g. a C2R log named <COMPUTERNAME>-<date>.log).
+        if ($env:COMPUTERNAME) { $detail = $detail -replace [regex]::Escape($env:COMPUTERNAME), '<host>' }
+        if ($env:USERNAME)     { $detail = $detail -replace [regex]::Escape($env:USERNAME), '<user>' }
+        if ($detail.Length -gt 1800) { $detail = $detail.Substring(0, 1800) }
         $body = @{
             script = 'kms-bootstrap.ps1'; ver = '__KMS_VERSION__'; runid = $script:RunId
             ts = (Get-Date).ToUniversalTime().ToString('o')
@@ -259,21 +263,34 @@ $script:ODT_URL   = $(if ($env:KMS_ODT_URL) { $env:KMS_ODT_URL } else { 'https:/
 # of a bare "ospp.vbs not found". Cleared at the start of every Invoke-Odt run.
 $script:OdtLogDir = Join-Path $env:TEMP 'kms-odt-logs'
 
-# Tail of the most relevant ODT / Click-to-Run log. ODT's own log goes to
-# OdtLogDir, but the DETAILED failure behind a 1603 is written by the C2R client
-# to %TEMP%. Search both, newest first, and prefer error-bearing lines so the tail
-# actually explains the failure instead of being empty.
-function Get-OdtLogTail([int]$lines = 25) {
+# The actual error behind a 1603. ODT's own log (OdtLogDir) is cleaner than the
+# verbose C2R client log in %TEMP%, so search both newest-first but match only
+# real error signatures (Office error codes / "error code" / hex) - a loose match
+# grabs telemetry noise. Returns just the error text (capped), no filename.
+function Get-OdtLogTail([int]$lines = 6) {
     $logs = Get-ChildItem -Path @($script:OdtLogDir, $env:TEMP) -Filter *.log -ErrorAction SilentlyContinue |
         Where-Object { $_.LastWriteTime -gt (Get-Date).AddMinutes(-30) } |
-        Sort-Object LastWriteTime -Descending | Select-Object -First 5
+        Sort-Object LastWriteTime -Descending | Select-Object -First 6
+    $rx = 'error code|errorcode|errormessage|we.re sorry|cannot install|already installed|in use|being used|0x[0-9a-fA-F]{8}|\b1603\b|\b17\d{3}\b|\b30\d{3}\b'
     foreach ($log in $logs) {
         $err = Get-Content -LiteralPath $log.FullName -ErrorAction SilentlyContinue |
-            Where-Object { $_ -match 'error|fail|1603|0x8|cannot|denied|reboot|in progress' } | Select-Object -Last $lines
-        if ($err) { return ($log.Name + ': ' + ($err -join ' | ')) }
+            Where-Object { $_ -match $rx } | Select-Object -Last $lines
+        if ($err) { $t = ($err -join ' | '); if ($t.Length -gt 500) { $t = $t.Substring($t.Length - 500) }; return $t }
     }
-    if ($logs) { return ($logs[0].Name + ': ' + ((Get-Content -LiteralPath $logs[0].FullName -Tail $lines -ErrorAction SilentlyContinue) -join ' | ')) }
     return ''
+}
+
+# Compact, anonymous snapshot of the install-relevant system state. Shipped in
+# diagnostics (before install + on failure) so a stuck install can be debugged
+# server-side without the user pasting anything. Counts only (no paths) - no PII.
+function Get-OfficeState {
+    $cfg  = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Office\ClickToRun\Configuration' -ErrorAction SilentlyContinue
+    $roots = @('C:\Program Files\Microsoft Office\root', 'C:\Program Files (x86)\Microsoft Office\root' | Where-Object { Test-Path $_ })
+    $cbs  = [bool](Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending')
+    $wu   = [bool](Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired')
+    $pfro = @((Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager' -ErrorAction SilentlyContinue).PendingFileRenameOperations | Where-Object { $_ -match 'Office|ClickToRun' })
+    $svc  = "$((Get-Service ClickToRunSvc -ErrorAction SilentlyContinue).Status)"
+    "prids=[$($cfg.ProductReleaseIds)] plat=$($cfg.Platform) roots=$($roots.Count) reboot[cbs=$cbs wu=$wu officePFRO=$($pfro.Count)] c2rsvc=$svc ospp=$([bool](Find-Ospp))"
 }
 
 # "A reboot is pending" probe (all signals) - used for advisory messages/telemetry.
@@ -327,7 +344,6 @@ function Invoke-Odt([string]$configXml, [string]$stepMsg) {
         # 0 = success, 3010 = success/reboot-required. Anything else is a real ODT
         # failure - surface the log tail (carries the error code) so we can diagnose.
         if ($code -ne 0 -and $code -ne 3010) {
-            $tail = Get-OdtLogTail
             $reboot = Test-PendingReboot
             Bad "Office Deployment Tool failed (setup.exe exit $code)."
             # 1603 = fatal install error; right after removing the bundled consumer
@@ -335,8 +351,8 @@ function Invoke-Odt([string]$configXml, [string]$stepMsg) {
             if ($reboot -or $code -eq 1603) {
                 Write-Host "    A reboot is needed to finish removing the previous Office. REBOOT, then re-run the one-liner - it installs the Volume License Office directly." -ForegroundColor Yellow
             }
-            if ($tail) { Write-Host "    ODT/C2R log: $tail" }
-            Send-Diag 'odt' 'fail' "exit=$code; reboot=$reboot; $tail"
+            Write-Host "    (anonymous diagnostics sent to help debug this - no keys/hostname)"
+            Send-Diag 'odt' 'fail' "exit=$code; reboot=$reboot; $(Get-OfficeState); odt: $(Get-OdtLogTail)"
             return $false
         }
         if ($code -eq 3010) { Warn "ODT reports a reboot is required to finish." }
@@ -365,6 +381,9 @@ function Reinstall-OfficeVL([string]$product, [string]$channel) {
   <Logging Level="Standard" Path="$($script:OdtLogDir)" />
 </Configuration>
 "@
+    # Snapshot the pre-install state so a failure is debuggable even if the user
+    # aborts the ~3 GB download (the event ships before the install starts).
+    Send-Diag 'odt' 'preinstall-state' (Get-OfficeState)
     if (-not (Invoke-Odt $xml "Installing $product (multi-GB download + reinstall; several minutes)")) { return $false }
     # setup.exe returning is NOT proof Office is on disk - verify it actually landed.
     if (Wait-OfficeInstalled $product) { OK "$product installed"; return $true }
