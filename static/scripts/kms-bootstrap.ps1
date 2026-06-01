@@ -216,7 +216,10 @@ function Get-LatestOfficeProduct([string]$label) {
 
 # Reinstall Office as a Volume License product via the Office Deployment Tool.
 # Heavy (multi-GB download, closes Office). Only invoked after explicit consent.
-$script:ODT_URL = 'https://download.microsoft.com/download/2/7/A/27AF1BE6-DD20-4CB4-B154-EBAB8A7D4A7E/officedeploymenttool_19127-20198.exe'
+# Self-hosted ODT bootstrapper (Microsoft's download.microsoft.com URL rotates
+# its build-numbered path every release and 404s; we serve a known-good copy
+# from our own /scripts). Override with $env:KMS_ODT_URL if ever needed.
+$script:ODT_URL = $(if ($env:KMS_ODT_URL) { $env:KMS_ODT_URL } else { 'https://kms.viktorbarzin.me/scripts/odt-setup.exe' })
 function Reinstall-OfficeVL([string]$product, [string]$channel) {
     $tmp = Join-Path $env:TEMP "kms-odt-$(Get-Random)"
     New-Item -ItemType Directory -Force -Path $tmp | Out-Null
