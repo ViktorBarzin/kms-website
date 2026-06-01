@@ -201,10 +201,20 @@ function Get-OfficeReleaseIds {
     return @()
 }
 
+# Newest VL product for a family from the published list (data-driven: "latest"
+# tracks products.yaml, so adding a future LTSC there makes this follow with no
+# script change). Picks the highest year among ProPlus/ProjectPro/VisioPro VL SKUs.
+function Get-LatestOfficeProduct([string]$label) {
+    $keys = Get-Keys; if (-not $keys) { return $null }
+    $pat = if ($label -eq 'Project') { '^ProjectPro\d+Volume$' } elseif ($label -eq 'Visio') { '^VisioPro\d+Volume$' } else { '^ProPlus\d+Volume$' }
+    $keys.office | Where-Object { $_.product -match $pat } |
+        Sort-Object { [int]([regex]::Match($_.product, '\d+').Value) } -Descending | Select-Object -First 1
+}
+
 # Reinstall Office as a Volume License product via the Office Deployment Tool.
 # Heavy (multi-GB download, closes Office). Only invoked after explicit consent.
 $script:ODT_URL = 'https://download.microsoft.com/download/2/7/A/27AF1BE6-DD20-4CB4-B154-EBAB8A7D4A7E/officedeploymenttool_19127-20198.exe'
-function Reinstall-OfficeVL([string]$product) {
+function Reinstall-OfficeVL([string]$product, [string]$channel) {
     $tmp = Join-Path $env:TEMP "kms-odt-$(Get-Random)"
     New-Item -ItemType Directory -Force -Path $tmp | Out-Null
     $odt = Join-Path $tmp 'odt.exe'
@@ -214,7 +224,7 @@ function Reinstall-OfficeVL([string]$product) {
     Start-Process -FilePath $odt -ArgumentList "/extract:`"$tmp`"", '/quiet' -Wait
     $setup = Join-Path $tmp 'setup.exe'
     if (-not (Test-Path $setup)) { Bad "ODT extraction failed (no setup.exe)."; return $false }
-    $channel = if ($product -match '2021') { 'PerpetualVL2021' } elseif ($product -match '2019') { 'PerpetualVL2019' } else { 'PerpetualVL2024' }
+    if (-not $channel) { $channel = if ($product -match '2021') { 'PerpetualVL2021' } elseif ($product -match '2019') { 'PerpetualVL2019' } else { 'PerpetualVL2024' } }
     $cfg = Join-Path $tmp 'config.xml'
     @"
 <Configuration>
@@ -229,6 +239,30 @@ function Reinstall-OfficeVL([string]$product) {
     Start-Process -FilePath $setup -ArgumentList '/configure', "`"$cfg`"" -Wait
     Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
     return $true
+}
+
+# Offer to install the LATEST Volume License product for a family (or the
+# explicit $env:KMS_OFFICE_PRODUCT) via the ODT, after showing the consequences.
+# Returns the installed product id, or $null if skipped/failed.
+function Install-LatestOfficeVL([string]$label) {
+    $best = $null; $target = $env:KMS_OFFICE_PRODUCT; $channel = $null
+    if (-not $target) { $best = Get-LatestOfficeProduct $label; if ($best) { $target = $best.product; $channel = $best.channel } }
+    if (-not $target) { Warn "Couldn't determine the latest VL $label product from the key list."; return $null }
+    $disp = if ($best) { "$($best.edition) ($target)" } else { $target }
+    $text = @"
+KMS can only activate Volume License $label, and none is installed here.
+The Office Deployment Tool can install the LATEST Volume License edition:
+
+    ->  $disp
+
+Consequences:
+  * Downloads ~3 GB and runs setup.exe /configure
+  * CLOSES all running Office apps (Word/Excel/Outlook/...)
+  * Several minutes
+"@
+    if (-not (Approve $text ([bool]$env:KMS_OFFICE_PRODUCT))) { Warn "$label install skipped."; return $null }
+    if (-not (Reinstall-OfficeVL $target $channel)) { return $null }
+    return $target
 }
 
 # Per-product license check. ospp /dstatus lists EVERY installed product, so a
@@ -248,47 +282,31 @@ function Test-OsppLicensed($ospp, $label) {
 
 function Activate-Ospp([string]$label) {
     $ospp = Find-Ospp
+    # No Office found at all -> offer to install the latest VL edition.
     if (-not $ospp) {
-        Warn "$label`: ospp.vbs not found (Office not installed?). Skipping."
-        return
+        Step "$label`: no Office found - offering the latest Volume License install"
+        $t = Install-LatestOfficeVL $label
+        if (-not $t) { return }
+        $ospp = Find-Ospp; if (-not $ospp) { Bad "$label`: ospp.vbs not found after install."; return }
     }
     Step "$label activation via $ospp"
     & cscript //Nologo $ospp /sethst:$KmsHost | Out-Host
     & cscript //Nologo $ospp /setprt:$KmsPort | Out-Host
     # Idempotent: skip /act when THIS family is already licensed.
     if (Test-OsppLicensed $ospp $label) { OK "$label already licensed - host set, skipping /act"; return }
-    # Not licensed: install the matching GVLK for each installed VL product of
-    # this family (Office = anything that isn't Project/Visio), fetched from the list.
-    # Match this family's installed VL products. NB: avoid `switch ($label)` here:
+    # Installed VL products of this family. NB: avoid `switch ($label)` here -
     # inside a switch, $_ is the switch input (the label), not the pipeline item.
     $rels = Get-OfficeReleaseIds | Where-Object {
         ($label -eq 'Project' -and $_ -match 'Project') -or
         ($label -eq 'Visio'   -and $_ -match 'Visio')   -or
         ($label -eq 'Office'  -and $_ -notmatch 'Project|Visio')
     }
-    # No Volume License product of this family installed (e.g. retail Office).
-    # Offer a VL reinstall via the ODT (default product per family; override
-    # with $env:KMS_OFFICE_PRODUCT). Heavy + closes apps, so consent-gated.
+    # No VL product of this family (e.g. retail/M365 Office) -> offer latest VL.
     if (-not $rels) {
-        $target = if ($env:KMS_OFFICE_PRODUCT) { $env:KMS_OFFICE_PRODUCT }
-        elseif ($label -eq 'Project') { 'ProjectPro2024Volume' }
-        elseif ($label -eq 'Visio') { 'VisioPro2024Volume' }
-        else { 'ProPlus2024Volume' }
-        $text = @"
-No Volume License $label is installed, so KMS cannot activate it.
-The Office Deployment Tool can reinstall it as Volume License:
-
-    ->  $target
-
-Consequences:
-  * Downloads ~3 GB and runs setup.exe /configure
-  * CLOSES all running Office apps (Word/Excel/Outlook/...)
-  * Several minutes; replaces the current $label install
-"@
-        if (-not (Approve $text ([bool]$env:KMS_OFFICE_PRODUCT))) { Warn "$label reinstall skipped; no VL $label to activate."; return }
-        if (-not (Reinstall-OfficeVL $target)) { return }
-        $ospp = Find-Ospp; if (-not $ospp) { Bad "ospp.vbs not found after reinstall."; return }
-        $rels = @($target)
+        $t = Install-LatestOfficeVL $label
+        if (-not $t) { return }
+        $ospp = Find-Ospp; if (-not $ospp) { Bad "ospp.vbs not found after install."; return }
+        $rels = @($t)
     }
     $keys = Get-Keys
     foreach ($rel in $rels) {
@@ -296,7 +314,7 @@ Consequences:
         if ($k) { Write-Host "    $rel -> installing GVLK $k"; & cscript //Nologo $ospp /inpkey:$k | Out-Host }
     }
     & cscript //Nologo $ospp /act | Out-Host
-    if (Test-OsppLicensed $ospp $label) { OK "$label licensed" } else { Warn "$label status not LICENSED yet (no VL $label SKU installed? See https://kms.viktorbarzin.me/#office)" }
+    if (Test-OsppLicensed $ospp $label) { OK "$label licensed" } else { Warn "$label status not LICENSED yet (no VL $label SKU? See https://kms.viktorbarzin.me/#office)" }
 }
 if ($doOfficeAct) { Activate-Ospp 'Office'  }
 if ($doProjAct)   { Activate-Ospp 'Project' }
