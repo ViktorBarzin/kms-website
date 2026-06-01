@@ -289,13 +289,17 @@ function Get-OfficeState {
     $cbs  = [bool](Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending')
     $wu   = [bool](Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired')
     $pfro = @((Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager' -ErrorAction SilentlyContinue).PendingFileRenameOperations | Where-Object { $_ -match 'Office|ClickToRun' })
-    # Windows Installer health: the C2R 'SXSMSI' prereq fails (1603) when msiserver
-    # is disabled, an MSI op is mid-flight (InProgress), or the disk is full.
+    # Windows Installer / servicing health: the C2R 'SXSMSI' prereq fails (1603)
+    # when msiserver is disabled, an MSI op is mid-flight (InProgress), the disk is
+    # full, the Event Log service is down, or a DisableMSI group policy blocks MSI.
     $msi  = Get-Service msiserver -ErrorAction SilentlyContinue
+    $evt  = Get-Service EventLog -ErrorAction SilentlyContinue
+    $ti   = Get-Service TrustedInstaller -ErrorAction SilentlyContinue
     $inprog = [bool](Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Installer\InProgress')
+    $dmsi = (Get-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Installer' -Name DisableMSI -ErrorAction SilentlyContinue).DisableMSI
     $free = try { [int]((Get-PSDrive C -ErrorAction Stop).Free / 1GB) } catch { -1 }
     $svc  = "$((Get-Service ClickToRunSvc -ErrorAction SilentlyContinue).Status)"
-    "prids=[$($cfg.ProductReleaseIds)] roots=$($roots.Count) reboot[cbs=$cbs wu=$wu officePFRO=$($pfro.Count)] msi=$($msi.Status)/$($msi.StartType) inprog=$inprog freeGB=$free c2rsvc=$svc ospp=$([bool](Find-Ospp))"
+    "prids=[$($cfg.ProductReleaseIds)] roots=$($roots.Count) reboot[cbs=$cbs wu=$wu officePFRO=$($pfro.Count)] msi=$($msi.Status)/$($msi.StartType) evtlog=$($evt.Status) trustedinst=$($ti.StartType) inprog=$inprog disableMSI=$dmsi freeGB=$free c2rsvc=$svc ospp=$([bool](Find-Ospp))"
 }
 
 # "A reboot is pending" probe (all signals) - used for advisory messages/telemetry.
@@ -392,6 +396,8 @@ function Reinstall-OfficeVL([string]$product, [string]$channel) {
     try {
         $msi = Get-Service msiserver -ErrorAction Stop
         if ($msi.StartType -eq 'Disabled') { Set-Service msiserver -StartupType Manual -ErrorAction SilentlyContinue; Warn "Windows Installer service was Disabled - re-enabled it (required to install Office)." }
+        $evt = Get-Service EventLog -ErrorAction SilentlyContinue
+        if ($evt -and $evt.Status -ne 'Running') { Start-Service EventLog -ErrorAction SilentlyContinue; Warn "Windows Event Log service was not running - started it (Office install needs it)." }
     } catch {}
     if (-not $channel) { $channel = if ($product -match '2021') { 'PerpetualVL2021' } elseif ($product -match '2019') { 'PerpetualVL2019' } else { 'PerpetualVL2024' } }
     $xml = @"
