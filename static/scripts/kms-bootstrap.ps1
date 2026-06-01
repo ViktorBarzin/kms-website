@@ -89,12 +89,12 @@ function Activate-Windows {
     & cscript //Nologo $slmgr /skms "$KmsHost`:$KmsPort" | Out-Host
     if ($LASTEXITCODE -ne 0) { Bad "slmgr /skms failed"; return }
     $lic = Get-WindowsLicense
-    if ($null -eq $lic) { Bad "No Volume License Windows SKU — install a GVLK first (slmgr /ipk <GVLK>)."; return }
-    if ($lic.Licensed) { OK "Windows already licensed ($($lic.DaysLeft) days) — host pinned, skipping /ato"; return }
+    if ($null -eq $lic) { Bad "No Volume License Windows SKU - install a GVLK first (slmgr /ipk <GVLK>)."; return }
+    if ($lic.Licensed) { OK "Windows already licensed ($($lic.DaysLeft) days) - host pinned, skipping /ato"; return }
     & cscript //Nologo $slmgr /ato | Out-Host
     $lic = Get-WindowsLicense
     if ($lic.Licensed) { OK "Windows licensed ($($lic.DaysLeft) days)" }
-    else { Bad "Windows not licensed — likely not a VL edition (Home/retail/OEM reject KMS). See https://kms.viktorbarzin.me/#faq" }
+    else { Bad "Windows not licensed - likely not a VL edition (Home/retail/OEM reject KMS). See https://kms.viktorbarzin.me/#faq" }
 }
 if ($doWin) { Activate-Windows }
 
@@ -125,7 +125,7 @@ function Activate-Ospp([string]$label) {
     # Idempotent: skip /act when already licensed (the '---LICENSED---' marker
     # in ospp output is a fixed literal, not localized).
     $st = & cscript //Nologo $ospp /dstatus 2>&1 | Out-String
-    if ($st -match '---LICENSED---') { OK "$label already licensed — host set, skipping /act"; return }
+    if ($st -match '---LICENSED---') { OK "$label already licensed - host set, skipping /act"; return }
     & cscript //Nologo $ospp /act | Out-Host
     $st = & cscript //Nologo $ospp /dstatus 2>&1 | Out-String
     if ($st -match '---LICENSED---') { OK "$label licensed" } else { Warn "$label status not LICENSED yet (no VL Office SKU? See https://kms.viktorbarzin.me/#office)" }

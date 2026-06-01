@@ -2,7 +2,7 @@
 #
 # Minimal KMS-host wiring for an already-installed Volume License Windows.
 # Pins the KMS host, then activates only if not already licensed.
-# Idempotent — safe to re-run: if Windows is already licensed it reports the
+# Idempotent - safe to re-run: if Windows is already licensed it reports the
 # remaining days and exits without re-contacting the KMS server.
 # Does NOT install Office. Does NOT change DNS suffix. Pin only.
 #
