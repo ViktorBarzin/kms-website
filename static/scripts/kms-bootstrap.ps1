@@ -174,7 +174,7 @@ function Activate-Ospp([string]$label) {
     if ($st -match '---LICENSED---') { OK "$label already licensed - host set, skipping /act"; return }
     # Not licensed: install the matching GVLK for each installed VL product of
     # this family (Office = anything that isn't Project/Visio), fetched from the list.
-    # Match this family's installed VL products. NB: avoid `switch ($label)` here —
+    # Match this family's installed VL products. NB: avoid `switch ($label)` here:
     # inside a switch, $_ is the switch input (the label), not the pipeline item.
     $rels = Get-OfficeReleaseIds | Where-Object {
         ($label -eq 'Project' -and $_ -match 'Project') -or
