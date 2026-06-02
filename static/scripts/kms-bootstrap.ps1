@@ -329,6 +329,31 @@ function Show-RestartHint {
     Write-Host "    Then re-run the one-liner."
 }
 
+# Marker that the deep repair already ran (persists across runs/reboots) so a
+# still-failing install escalates to the in-place repair instead of looping.
+function Test-DeepRepairDone {
+    [bool](Get-ItemProperty 'HKLM:\SOFTWARE\kms-bootstrap' -Name DeepRepairDone -ErrorAction SilentlyContinue)
+}
+
+# Last-resort guidance. Reached only when the C2R install prereq (SXSMSI/1603)
+# keeps failing AFTER a deep repair, with every script-checkable cause clean -
+# i.e. the Windows servicing/Installer subsystem is corrupted below DISM/SFC.
+# Validated on PVE VM 300: the identical script + identical retail->VL journey
+# installs + activates cleanly, so a persistent failure here is the machine, not
+# the script. The only reliable fix is an in-place Windows repair-install.
+function Show-InPlaceRepairHint {
+    Write-Host ""
+    Write-Host "==> The Windows Office-install prerequisite is still failing after a deep repair." -ForegroundColor White
+    Write-Host "    Every cause this script can check is clean, and the same script installs Office" -ForegroundColor Yellow
+    Write-Host "    fine on other machines - so the Windows servicing/Installer subsystem on THIS PC" -ForegroundColor Yellow
+    Write-Host "    is corrupted below what DISM/SFC repair. The reliable fix keeps your files+apps:" -ForegroundColor Yellow
+    Write-Host "    IN-PLACE WINDOWS REPAIR-INSTALL:" -ForegroundColor Cyan
+    Write-Host "      1. Settings > System > Recovery > 'Fix problems using Windows Update' (Win11)," -ForegroundColor Cyan
+    Write-Host "         OR download the Windows ISO, mount it, run setup.exe." -ForegroundColor Cyan
+    Write-Host "      2. Choose 'Keep personal files and apps'. ~30 min, one reboot." -ForegroundColor Cyan
+    Write-Host "      3. Re-run this one-liner - Office will install + activate on the first try." -ForegroundColor Cyan
+}
+
 # Poll until the C2R install actually lands. setup.exe /configure can return before
 # the Click-to-Run service finishes the multi-GB install, so trust on-disk state
 # (ospp.vbs + the product in ProductReleaseIds), not setup.exe's return. Heartbeat
@@ -414,6 +439,10 @@ A RESTART is required afterwards, then re-run this one-liner to install Office.
     OK "Deep repair complete."
     Write-Host ""
     Write-Host "==> NOW restart the PC (Start -> Power -> RESTART, not Shut down), then re-run the one-liner." -ForegroundColor Yellow
+    # Persist that the deep repair ran so a still-failing install next time escalates
+    # to the in-place-repair guidance instead of offering the deep repair again.
+    New-Item -Path 'HKLM:\SOFTWARE\kms-bootstrap' -Force -ErrorAction SilentlyContinue | Out-Null
+    Set-ItemProperty -Path 'HKLM:\SOFTWARE\kms-bootstrap' -Name 'DeepRepairDone' -Value (Get-Date).ToString('o') -ErrorAction SilentlyContinue
     Send-Diag 'odt' 'deep-repair-done' (Get-OfficeState)
     return $true
 }
@@ -452,8 +481,18 @@ function Reinstall-OfficeVL([string]$product, [string]$channel) {
     Send-Diag 'odt' 'preinstall-state' (Get-OfficeState)
     if (-not (Invoke-Odt $xml "Installing $product (multi-GB download + reinstall; several minutes)")) {
         # SXSMSI/1603 with no pending reboot = the Windows install subsystem itself is
-        # wedged (survives DISM/SFC). Offer the deep repair, then reboot + re-run.
-        if ($script:OdtExitCode -eq 1603 -and -not (Test-OfficeRebootPending)) { Repair-OfficePrereq | Out-Null }
+        # wedged (survives DISM/SFC). First time: offer the deep repair. If the deep
+        # repair already ran and it STILL fails, escalate to the in-place-repair fix
+        # (proven on VM 300 that the script itself is sound, so this is the machine).
+        if ($script:OdtExitCode -eq 1603 -and -not (Test-OfficeRebootPending)) {
+            if (Test-DeepRepairDone) {
+                Bad "$product still fails the Windows install prerequisite (1603) after a deep repair."
+                Show-InPlaceRepairHint
+                Send-Diag 'odt' 'sxsmsi-unrecoverable' (Get-OfficeState)
+            } else {
+                Repair-OfficePrereq | Out-Null
+            }
+        }
         return $false
     }
     # setup.exe returning is NOT proof Office is on disk - verify it actually landed.
