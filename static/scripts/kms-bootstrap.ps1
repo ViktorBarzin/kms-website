@@ -283,6 +283,41 @@ function Get-OdtLogTail([int]$lines = 6) {
 # Compact, anonymous snapshot of the install-relevant system state. Shipped in
 # diagnostics (before install + on failure) so a stuck install can be debugged
 # server-side without the user pasting anything. Counts only (no paths) - no PII.
+# Detect a pre-existing MSI-based Office (2010/2013/2016). The main suite product
+# registers an ARP key named OfficeNN.<RELEASE> (e.g. Office14.STANDARDR = Office
+# 2010 Standard). An MSI Office BLOCKS a Click-to-Run install - the C2R 'SXSMSI'
+# prereq fails 1603 ("32bit MSI Installation found and trying to install 64bit
+# C2R") and MSI Office cannot coexist with C2R - so it must be removed first.
+# This is the gap that hid a real failure: the script used to look only at C2R
+# ProductReleaseIds, where an MSI Office never appears.
+function Get-MsiOffice {
+    $paths = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*',
+             'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*'
+    Get-ItemProperty $paths -ErrorAction SilentlyContinue |
+        Where-Object { $_.PSChildName -match '^Office(\d\d)\.(\w+)$' } |
+        ForEach-Object {
+            [void]($_.PSChildName -match '^Office(\d\d)\.(\w+)$')
+            $ver = $matches[1]; $rel = $matches[2]
+            $ctrl = @("${env:CommonProgramFiles(x86)}\Microsoft Shared\OFFICE$ver\Office Setup Controller\setup.exe",
+                      "$env:CommonProgramFiles\Microsoft Shared\OFFICE$ver\Office Setup Controller\setup.exe") |
+                    Where-Object { Test-Path $_ } | Select-Object -First 1
+            [pscustomobject]@{ Name = $_.DisplayName; Ver = $ver; Release = $rel; Controller = $ctrl }
+        }
+}
+
+# Silently uninstall an MSI Office suite via its Office Setup Controller + a
+# Display=none config (works for Office 2010/2013/2016 MSI).
+function Remove-MsiOffice($o) {
+    if (-not $o.Controller) { Bad "$($o.Name): Office Setup Controller not found; cannot auto-remove. Uninstall it from Settings > Apps, then re-run."; return $false }
+    $cfg = Join-Path $env:TEMP "kms-msiun-$($o.Release).xml"
+    "<Configuration Product=`"$($o.Release)`"><Display Level=`"none`" CompletionNotice=`"no`" SuppressModal=`"yes`" AcceptEula=`"yes`" /><Setting Id=`"SETUP_REBOOT`" Value=`"Never`" /></Configuration>" |
+        Set-Content -Path $cfg -Encoding ascii
+    Step "Uninstalling $($o.Name) (old MSI Office; several minutes)"
+    $p = Start-Process -FilePath $o.Controller -ArgumentList '/uninstall', $o.Release, '/config', "`"$cfg`"" -Wait -PassThru
+    # 0 = ok, 1605 = already absent, 3010 = ok/reboot-required.
+    return ($p.ExitCode -in 0, 1605, 3010)
+}
+
 function Get-OfficeState {
     $cfg  = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Office\ClickToRun\Configuration' -ErrorAction SilentlyContinue
     $roots = @('C:\Program Files\Microsoft Office\root', 'C:\Program Files (x86)\Microsoft Office\root' | Where-Object { Test-Path $_ })
@@ -299,7 +334,8 @@ function Get-OfficeState {
     $dmsi = (Get-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Installer' -Name DisableMSI -ErrorAction SilentlyContinue).DisableMSI
     $free = try { [int]((Get-PSDrive C -ErrorAction Stop).Free / 1GB) } catch { -1 }
     $svc  = "$((Get-Service ClickToRunSvc -ErrorAction SilentlyContinue).Status)"
-    "prids=[$($cfg.ProductReleaseIds)] roots=$($roots.Count) reboot[cbs=$cbs wu=$wu officePFRO=$($pfro.Count)] msi=$($msi.Status)/$($msi.StartType) evtlog=$($evt.Status) trustedinst=$($ti.StartType) inprog=$inprog disableMSI=$dmsi freeGB=$free c2rsvc=$svc ospp=$([bool](Find-Ospp))"
+    $msiOffice = @(Get-MsiOffice | ForEach-Object { "$($_.Ver).$($_.Release)" })
+    "prids=[$($cfg.ProductReleaseIds)] msiOffice=[$($msiOffice -join ',')] roots=$($roots.Count) reboot[cbs=$cbs wu=$wu officePFRO=$($pfro.Count)] msi=$($msi.Status)/$($msi.StartType) evtlog=$($evt.Status) trustedinst=$($ti.StartType) inprog=$inprog disableMSI=$dmsi freeGB=$free c2rsvc=$svc ospp=$([bool](Find-Ospp))"
 }
 
 # "A reboot is pending" probe (all signals) - used for advisory messages/telemetry.
@@ -533,33 +569,46 @@ function Install-LatestOfficeVL([string]$label) {
     $disp = if ($best) { "$($best.edition) ($target)" } else { $target }
     # Retail/M365 Click-to-Run Office (IDs not ending in 'Volume') can't coexist
     # with a VL install of the same suite and must be removed first.
+    # Two kinds of blocker must be removed before a VL C2R install:
+    #  1. Retail/M365 Click-to-Run of the same suite (IDs not ending in 'Volume').
+    #  2. A pre-existing MSI-based Office (2010/2013/2016) - it makes the C2R
+    #     installer fail its SXSMSI prereq (1603, "32bit MSI Installation found").
     $incompat = @(Get-AllOfficeC2R | Where-Object { $_ -notmatch 'Volume$' })
-    $rm = if ($incompat) { "`n  * FIRST UNINSTALLS the incompatible (non-VL) Office found: $($incompat -join ', ')" } else { '' }
+    $msi      = @(Get-MsiOffice)
+    $rm    = if ($incompat) { "`n  * FIRST UNINSTALLS the incompatible (non-VL) Office found: $($incompat -join ', ')" } else { '' }
+    $rmMsi = if ($msi)      { "`n  * FIRST UNINSTALLS the old MSI Office that blocks this install: $(($msi | ForEach-Object { $_.Name }) -join ', ')" } else { '' }
     $text = @"
 KMS can only activate Volume License $label, and none is installed here.
 The Office Deployment Tool can install the LATEST Volume License edition:
 
     ->  $disp
 
-Consequences:$rm
+Consequences:$rm$rmMsi
   * Downloads ~3 GB and runs setup.exe /configure
   * CLOSES all running Office apps (Word/Excel/Outlook/...)
   * Several minutes
 "@
     if (-not (Approve $text ([bool]$env:KMS_OFFICE_PRODUCT))) { Warn "$label install skipped."; Send-Diag $label.ToLower() 'install-skipped' $target; return $null }
+    $removed = $false
     if ($incompat) {
         if (-not (Uninstall-OfficeC2R $incompat)) { Bad "Uninstall of incompatible Office failed; aborting before VL install."; Send-Diag $label.ToLower() 'uninstall-fail' ($incompat -join ','); return $null }
-        Send-Diag $label.ToLower() 'uninstalled-incompatible' ($incompat -join ',')
-        # Removing the bundled consumer Office usually leaves the servicing stack
-        # pending a reboot; a VL install in the SAME session then half-completes with
-        # no ospp.vbs. Stop here and have the user reboot + re-run - the script is
-        # idempotent and (no incompatible Office left) goes straight to the install.
-        if (Test-PendingReboot) {
-            Warn "Incompatible Office removed, but a reboot is required before the Volume License install."
-            Write-Host "    Please REBOOT, then re-run the one-liner - it will skip the uninstall and install $target directly."
-            Send-Diag $label.ToLower() 'reboot-required-after-uninstall' $target
-            return $null
+        Send-Diag $label.ToLower() 'uninstalled-incompatible' ($incompat -join ','); $removed = $true
+    }
+    if ($msi) {
+        foreach ($o in $msi) {
+            if (-not (Remove-MsiOffice $o)) { Bad "Uninstall of $($o.Name) failed; aborting before VL install."; Send-Diag $label.ToLower() 'msi-uninstall-fail' "$($o.Ver).$($o.Release)"; return $null }
         }
+        Send-Diag $label.ToLower() 'uninstalled-msi-office' (($msi | ForEach-Object { "$($_.Ver).$($_.Release)" }) -join ','); $removed = $true
+    }
+    # Any Office removal leaves the servicing stack pending a reboot; a VL install in
+    # the SAME session then half-completes (no ospp.vbs / SXSMSI). Stop and have the
+    # user reboot + re-run - the script is idempotent and (no blocker left) goes
+    # straight to the install.
+    if ($removed -and (Test-PendingReboot)) {
+        Warn "Old Office removed, but a reboot is required before the Volume License install."
+        Write-Host "    Please REBOOT, then re-run the one-liner - it will skip the uninstall and install $target directly."
+        Send-Diag $label.ToLower() 'reboot-required-after-uninstall' $target
+        return $null
     }
     if (-not (Reinstall-OfficeVL $target $channel)) { return $null }
     return $target
