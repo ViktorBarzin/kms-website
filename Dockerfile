@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.6
 ARG HUGO_VERSION=0.139.0
-ARG NGINX_VERSION=1.27-alpine
+ARG NGINX_VERSION=1.30-alpine
 
 FROM hugomods/hugo:${HUGO_VERSION} AS build
 ARG SCRIPT_VERSION=dev
