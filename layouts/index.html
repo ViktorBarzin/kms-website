@@ -9,6 +9,13 @@
   <link rel="stylesheet" href="{{ "css/style.css" | relURL }}">
   <link rel="preconnect" href="https://rsms.me/">
   <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
+  <!-- Self-hosted analytics (Rybbit) through the same-origin Ingest path, on the
+       production build only. The meta tag tells the edge injection plugin that
+       the page loads the script itself (infra ADR-0041). -->
+  <meta name="analytics" content="sdk">
+  {{ if hugo.IsProduction }}
+  <script src="/_t/r/script.js" data-site-id="1" defer data-replay-mask-all-inputs="false" data-replay-mask-input-options='{"password":true}'></script>
+  {{ end }}
 </head>
 <body>
 
@@ -18,7 +25,7 @@
       <span class="logo">⊞</span>
       <div>
         <h1>kms.viktorbarzin.me</h1>
-        <p class="tag">Free public KMS · Windows · Office · Project · Visio · No signup, no tracking</p>
+        <p class="tag">Free public KMS · Windows · Office · Project · Visio · No signup, no third-party tracking</p>
       </div>
     </div>
     <nav>
@@ -317,7 +324,10 @@ cscript ospp.vbs /dstatus               :: verify --LICENSED--</code></pre>
       the operator can see overall traffic. The PowerShell scripts additionally send a small
       <strong>anonymous</strong> diagnostics event (see next question) so the operator can spot
       and fix script breakage. No personal data beyond what the KMS protocol itself transmits is
-      collected; nothing is shared, sold, or retained beyond the operator's monitoring. If that
+      collected; nothing is shared, sold, or retained beyond the operator's monitoring. This
+      website uses self-hosted, first-party analytics (Rybbit) for page views and session
+      recordings with password fields masked; that data stays on the operator's servers and
+      goes to no third party. If that
       bothers you, run your own vlmcsd — it's a single binary, the source is on
       <a href="https://github.com/Wind4/vlmcsd" target="_blank" rel="noopener">GitHub</a>.</p>
     </details>
